@@ -1,7 +1,7 @@
 ---
 name: ml-experiment-reporter
 description: >
-  Writes a structured report on ML experiment results, grounded in the experiment's PLAN.md
+  Writes a structured report on ML experiment results, grounded in the experiment's DESIGN.md
   and the actual results files. Use this skill whenever a user wants to document, summarise,
   or communicate the outcome of a machine learning experiment — including phrases like "write
   a report", "summarise my results", "document what happened", "write up the experiment",
@@ -29,7 +29,7 @@ documents what was done, what was found, and what it means — grounded strictly
 └── experiments/
     ├── INDEX.md                         ← update: set this exp's Status + Verdict row
     └── exp_<n>/
-        ├── PLAN.md                      ← input: read this first (the research design)
+        ├── DESIGN.md                      ← input: read this first (the research design)
         ├── IMPLEMENTATION.md            ← input: how it was built (condition→config map, deviations)
         ├── scripts/configs/             ← input: read relevant configs
         ├── results/
@@ -42,7 +42,7 @@ documents what was done, what was found, and what it means — grounded strictly
             └── summary.md              ← OUTPUT: written here
 ```
 
-The four experiment phases each leave an artifact — `PLAN.md` (design) → `IMPLEMENTATION.md` (build) → `results/` (execution) → `summary.md` (this report). `PLAN.md` says what was *intended*; `IMPLEMENTATION.md` says what was *built*; `results/` shows what *happened*. A faithful report reconciles all three.
+The four experiment phases each leave an artifact — `DESIGN.md` (design) → `IMPLEMENTATION.md` (build) → `results/` (execution) → `summary.md` (this report). `DESIGN.md` says what was *intended*; `IMPLEMENTATION.md` says what was *built*; `results/` shows what *happened*. A faithful report reconciles all three.
 
 ---
 
@@ -51,7 +51,7 @@ The four experiment phases each leave an artifact — `PLAN.md` (design) → `IM
 ### Step 0. Locate Inputs
 
 1. Ask the user for the experiment folder path if not already provided (e.g., `myproject/experiments/exp_3`).
-2. Read `PLAN.md` from the experiment root — the ground truth for what was *intended*.
+2. Read `DESIGN.md` from the experiment root — the ground truth for what was *intended*.
 3. Read `IMPLEMENTATION.md` from the experiment root if present — the record of what was *built* (which config/script produced each condition, and any decisions that departed from the design). This is what lets §3 report build-level deviations rather than only "did this condition run." If it's absent, note that under caveats (§8) — the build can then only be inferred from configs and git.
 4. Scan `results/` to discover which conditions were actually run:
    ```bash
@@ -64,13 +64,15 @@ The four experiment phases each leave an artifact — `PLAN.md` (design) → `IM
 6. Read relevant configs from `scripts/configs/` if metric context is unclear.
 7. Optionally read `experiments/INDEX.md` to find related experiments to reference in §9.
 
-Before reading, sanity-check that the folder actually looks like a skill-managed experiment — it should contain a `PLAN.md` and/or a `results/` directory. If it matches, proceed silently. If it clearly doesn't (no `results/` *and* no `PLAN.md`, or a flat project with metrics scattered elsewhere), don't guess and don't fabricate a report from a structure you can't locate. Tell the user:
-> ⚠️ This folder doesn't match the layout I expect (`PLAN.md` + `results/<condition>/`). Point me to where the plan and per-condition results actually live, or run the ml-experiment-planner skill first to set up the structure.
+Before reading, sanity-check that the folder actually looks like a skill-managed experiment — it should contain a `DESIGN.md` (or a legacy `PLAN.md` — see below) and/or a `results/` directory. If it matches, proceed silently. If it clearly doesn't (no `results/` *and* no `DESIGN.md`/`PLAN.md`, or a flat project with metrics scattered elsewhere), don't guess and don't fabricate a report from a structure you can't locate. Tell the user:
+> ⚠️ This folder doesn't match the layout I expect (`DESIGN.md` + `results/<condition>/`). Point me to where the plan and per-condition results actually live, or run the ml-experiment-planner skill first to set up the structure.
 
 Then work only from the paths they give back.
 
-If `PLAN.md` is missing but `results/` exists, warn the user:
-> ⚠️ No PLAN.md found. The report cannot be cross-referenced against a plan. Proceeding with results only — consider creating a plan retroactively with the ml-experiment-planner skill.
+**Backward compatibility.** Older experiments (created before this skill renamed the plan file) keep the research design in `PLAN.md` rather than `DESIGN.md`. If you find a `PLAN.md` at the experiment root and no `DESIGN.md`, treat that `PLAN.md` as the design file — read it as the ground truth, apply every `DESIGN.md §N` cross-reference below to it, and write the status update back into it. Don't rename the file or warn about its name; only fall through to the "missing" warning below when *neither* `DESIGN.md` nor `PLAN.md` exists.
+
+If neither `DESIGN.md` nor a legacy `PLAN.md` is present but `results/` exists, warn the user:
+> ⚠️ No DESIGN.md found. The report cannot be cross-referenced against a plan. Proceeding with results only — consider creating a plan retroactively with the ml-experiment-planner skill.
 
 ---
 
@@ -80,11 +82,11 @@ Before writing, build a mental diff between what was planned and what was run:
 
 | Check | How |
 |-------|-----|
-| All planned conditions run? | Compare PLAN.md §5 conditions vs. `results/` subdirs |
-| All planned baselines run? | Compare PLAN.md §4 baselines vs. `results/` subdirs |
-| All planned ablations run? | Compare PLAN.md §6 vs. `results/` subdirs |
-| Built as designed? | Compare `IMPLEMENTATION.md` (configs/scripts per condition) vs. PLAN.md intent |
-| Primary metric present? | Check `metrics.json` keys vs. PLAN.md §7 |
+| All planned conditions run? | Compare DESIGN.md §5 conditions vs. `results/` subdirs |
+| All planned baselines run? | Compare DESIGN.md §4 baselines vs. `results/` subdirs |
+| All planned ablations run? | Compare DESIGN.md §6 vs. `results/` subdirs |
+| Built as designed? | Compare `IMPLEMENTATION.md` (configs/scripts per condition) vs. DESIGN.md intent |
+| Primary metric present? | Check `metrics.json` keys vs. DESIGN.md §7 |
 | Expected seed count met? | Count seed entries per condition |
 | Git commit recorded? | Check `git_commit.txt` exists per condition |
 
@@ -132,11 +134,11 @@ If metrics files use a different structure (e.g., CSV, YAML, per-epoch logs), ad
 Write to `experiments/<exp_id>/reports/summary.md` using this template:
 
 ```markdown
-# Experiment Report: [Title from PLAN.md]
+# Experiment Report: [Title from DESIGN.md]
 **Experiment**: experiments/<exp_id>/  
 **Project**: <project_name>  
 **Report date**: YYYY-MM-DD  
-**Plan date**: <date from PLAN.md>  
+**Plan date**: <date from DESIGN.md>  
 **Author**: <name or TBD>  
 **Status**: Complete / Partial / Failed
 
@@ -149,7 +151,7 @@ Write this for someone who won't read the rest of the report.
 ---
 
 ## 2. Hypothesis & Verdict
-**Hypothesis (from plan):** _copy exact hypothesis sentence from PLAN.md_
+**Hypothesis (from plan):** _copy exact hypothesis sentence from DESIGN.md_
 
 **Verdict:** ✅ Supported / ❌ Refuted / ⚠️ Inconclusive
 
@@ -159,7 +161,7 @@ success threshold defined in the plan.
 ---
 
 ## 3. Experimental Setup (as run)
-Describe what was actually built and run, drawing on `IMPLEMENTATION.md` and the configs. Note any deviation between the design (`PLAN.md`) and the build (`IMPLEMENTATION.md` / configs). If nothing changed, write "As described in PLAN.md." If there is no `IMPLEMENTATION.md`, say so — deviations can then only be inferred from configs and git, not confirmed.
+Describe what was actually built and run, drawing on `IMPLEMENTATION.md` and the configs. Note any deviation between the design (`DESIGN.md`) and the build (`IMPLEMENTATION.md` / configs). If nothing changed, write "As described in DESIGN.md." If there is no `IMPLEMENTATION.md`, say so — deviations can then only be inferred from configs and git, not confirmed.
 
 - **Dataset**: <name, version, split>
 - **Model**: <architecture, config>
@@ -190,7 +192,7 @@ Describe what was actually built and run, drawing on `IMPLEMENTATION.md` and the
 > Success threshold from plan: Δ ≥ 0.02. _Threshold [met / not met]._
 
 ### 5.2 Secondary Metrics
-Table or prose for secondary metrics defined in PLAN.md §7.
+Table or prose for secondary metrics defined in DESIGN.md §7.
 
 ### 5.3 Ablation Results (if applicable)
 | Ablation | Primary metric | Δ vs. full model | Interpretation |
@@ -220,7 +222,7 @@ report what the files support, flag what they don't.
 ---
 
 ## 7. Comparison to Expected Results
-Refer back to PLAN.md §8 (Expected Results & Decision Rules).
+Refer back to DESIGN.md §8 (Expected Results & Decision Rules).
 
 | Expected | Observed | Match? |
 |----------|----------|--------|
@@ -284,7 +286,7 @@ Write the report to `experiments/<exp_id>/reports/summary.md` with the **Write t
 
 After writing the report, close out the experiment's lifecycle bookkeeping — this is the terminal state the planner's status lifecycle hands off to the reporter:
 1. Confirm to the user: "Report written to `experiments/<exp_id>/reports/summary.md`."
-2. **Update `PLAN.md`'s `Status`** field to match the report (Complete / Partial / Failed) with an `Edit`. This is the one edit the reporter makes outside `reports/` — a single-field bookkeeping change so the plan reflects reality; do not rewrite any other part of `PLAN.md`.
+2. **Update `DESIGN.md`'s `Status`** field to match the report (Complete / Partial / Failed) with an `Edit`. This is the one edit the reporter makes outside `reports/` — a single-field bookkeeping change so the plan reflects reality; do not rewrite any other part of `DESIGN.md`. (For a legacy experiment whose design lives in `PLAN.md`, edit the `Status` field there instead — same single-field change, in whichever file holds the design.)
 3. **Update the experiment's row in `experiments/INDEX.md`** with the same Status and the verdict (✅ / ❌ / ⚠️), so the campaign view stays current. If `INDEX.md` doesn't exist, skip this (an older project may predate the convention).
 4. Show the §1 Summary and §9 Conclusions in chat — the user should not need to open the file to get the key takeaways.
 
@@ -292,7 +294,7 @@ After writing the report, close out the experiment's lifecycle bookkeeping — t
 
 ## Example Invocations
 
-- "Write a report for exp_3" → read PLAN.md + results/, write full summary.md
+- "Write a report for exp_3" → read DESIGN.md + results/, write full summary.md
 - "Summarise what happened in my contrastive loss experiment" → locate exp folder, write report
 - "My experiment finished, document the results" → ask for exp path, then full report
 - "Write up exp_2, we didn't finish all the ablations" → full report with §8 missing data noted

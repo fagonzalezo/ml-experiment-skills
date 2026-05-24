@@ -35,7 +35,7 @@ full research campaigns.
 
 **After the experiment plan is accepted by the user**, the natural next step is a separate **implementation plan** — covering which scripts to add or modify under `experiments/<exp_id>/scripts/`, what reusable code to add to `../../src/`, configs, and any data-pipeline changes. That implementation plan should be built in **Claude Code's plan mode** (or an equivalent review-before-edit flow) so the user can review and approve before any files are touched. Do not start editing implementation files from within this skill.
 
-This skill does not *write* the implementation plan, but it owns the convention for where it lives: once approved, the implementation plan is saved as `experiments/<exp_id>/IMPLEMENTATION.md`, right next to `PLAN.md`. Keeping the two together matters downstream — the reporter reads `IMPLEMENTATION.md` to map each condition to the config/script that produced it and to detect where the build diverged from the design. An implementation plan that lives only in a chat transcript is lost by report time.
+This skill does not *write* the implementation plan, but it owns the convention for where it lives: once approved, the implementation plan is saved as `experiments/<exp_id>/IMPLEMENTATION.md`, right next to `DESIGN.md`. Keeping the two together matters downstream — the reporter reads `IMPLEMENTATION.md` to map each condition to the config/script that produced it and to detect where the build diverged from the design. An implementation plan that lives only in a chat transcript is lost by report time.
 
 ---
 
@@ -51,7 +51,7 @@ Experiments live inside a standardized project layout:
 └── experiments/
     ├── INDEX.md        ← registry of all experiments (id, title, status, verdict)
     ├── exp_1/
-    │   ├── PLAN.md            ← experiment (research-design) plan — written by THIS skill
+    │   ├── DESIGN.md            ← experiment (research-design) plan — written by THIS skill
     │   ├── IMPLEMENTATION.md  ← implementation plan, saved after plan-mode approval
     │   ├── scripts/           ← run scripts, configs, sweep definitions
     │   ├── results/           ← model outputs, metrics, checkpoints
@@ -63,10 +63,10 @@ Experiments live inside a standardized project layout:
 ```
 
 These four phases each own an artifact, and the chain only works if each one is on disk:
-`PLAN.md` (planning) → `IMPLEMENTATION.md` (implementation planning, in plan mode) → `results/` (execution) → `reports/summary.md` (reporting). `experiments/INDEX.md` threads them together at the project level.
+`DESIGN.md` (planning) → `IMPLEMENTATION.md` (implementation planning, in plan mode) → `results/` (execution) → `reports/summary.md` (reporting). `experiments/INDEX.md` threads them together at the project level.
 
 **Key conventions:**
-- The plan file is always named `PLAN.md` at the **root of the experiment folder** (e.g., `experiments/exp_3/PLAN.md`). The implementation plan, once approved, sits beside it as `IMPLEMENTATION.md`.
+- The design file is always named `DESIGN.md` at the **root of the experiment folder** (e.g., `experiments/exp_3/DESIGN.md`). The implementation plan, once approved, sits beside it as `IMPLEMENTATION.md`.
 - `scripts/` holds run configs and training scripts that reference paths in `../../src/` and `../../data/`.
 - `results/` holds raw outputs (metrics JSON, checkpoints). `reports/` holds polished summaries and figures.
 - `experiments/INDEX.md` is the project's experiment registry **and** its self-documenting record of this layout — important because this skill is distributed standalone and the user's project won't carry external conventions docs. Create/update it at scaffold time (Step 0).
@@ -87,9 +87,9 @@ Look at the project root for the expected markers — chiefly an `experiments/` 
 2. **No project yet / empty directory**: ask for the project root and name, then scaffold the full structure (commands below).
 
 3. **Project exists but doesn't match** (no `experiments/` dir, a flat repo, or results/code in differently-named folders like `outputs/` or `models/`): **don't silently write into it.** Warn the user and offer a choice, e.g.:
-   > ⚠️ This project doesn't follow the experiment layout I expect (`experiments/exp_N/` with `PLAN.md`, `results/<condition>/`, `reports/`). I can **create that structure alongside your existing files**, or **write the plan where you point me** and you manage the paths yourself. Which would you prefer?
+   > ⚠️ This project doesn't follow the experiment layout I expect (`experiments/exp_N/` with `DESIGN.md`, `results/<condition>/`, `reports/`). I can **create that structure alongside your existing files**, or **write the plan where you point me** and you manage the paths yourself. Which would you prefer?
    - **Scaffold** → create the standard tree *additively* (commands below). Only create new directories — never move, rename, or reorganize the user's existing files. If they actually want existing code relocated into the layout, that's a separate, explicitly-confirmed action, not something this skill does on its own (it's easy to break imports and hard to undo).
-   - **Proceed as-is** → write `PLAN.md` at the path they give and add a ⚠️ note in the plan that the layout is non-standard, so reporting may need paths pointed out explicitly.
+   - **Proceed as-is** → write `DESIGN.md` at the path they give and add a ⚠️ note in the plan that the layout is non-standard, so reporting may need paths pointed out explicitly.
 
 4. **Always confirm** the experiment folder path with the user before creating files.
 
@@ -107,22 +107,24 @@ EXP=exp_<n>   # next available number
 mkdir -p $PROJECT/experiments/$EXP/{scripts,results,reports}
 ```
 
-**Write the plan file** with the **Write tool**, not a bash heredoc. The plan is a long Markdown document containing its own code fences and tables; writing it through `cat << EOF` invites quoting and escaping breakage. Use `mkdir -p` (bash) to create folders, then `Write` to create `experiments/<exp_id>/PLAN.md`.
+**Write the plan file** with the **Write tool**, not a bash heredoc. The plan is a long Markdown document containing its own code fences and tables; writing it through `cat << EOF` invites quoting and escaping breakage. Use `mkdir -p` (bash) to create folders, then `Write` to create `experiments/<exp_id>/DESIGN.md`.
 
 **Create or update `experiments/INDEX.md`** (with the Write tool). If it doesn't exist, create it with a short header documenting the layout (so the project is self-describing — this skill ships without any external conventions file), then a registry table. If it exists, append a row for the new experiment. One row per experiment:
 
 ```markdown
 # Experiments Index — <project_name>
 
-Layout: each `exp_<n>/` holds `PLAN.md` (research design) → `IMPLEMENTATION.md` (build plan)
-→ `results/<condition>/` (runs) → `reports/summary.md` (write-up). See any `PLAN.md` for detail.
+Layout: each `exp_<n>/` holds `DESIGN.md` (research design) → `IMPLEMENTATION.md` (build plan)
+→ `results/<condition>/` (runs) → `reports/summary.md` (write-up). See any `DESIGN.md` for detail.
 
 | Exp | Title | Status | Hypothesis (1 line) | Verdict | Date |
 |-----|-------|--------|---------------------|---------|------|
-| [exp_1](exp_1/PLAN.md) | Focal vs. CE on CheXpert | Draft | Focal loss improves macro-F1 ≥0.02 | — | 2026-05-23 |
+| [exp_1](exp_1/DESIGN.md) | Focal vs. CE on CheXpert | Draft | Focal loss improves macro-F1 ≥0.02 | — | 2026-05-23 |
 ```
 
 The reporter updates the `Status` and `Verdict` of a row when it writes the report, so this stays the live campaign view.
+
+**Backward compatibility.** An existing `INDEX.md` from an older project may link its rows to `PLAN.md` (e.g. `[exp_2](exp_2/PLAN.md)`) and carry a layout header that names `PLAN.md`. When you append a row, only add the new experiment's row — link it to `DESIGN.md`, since that's the file this skill now writes — and **leave the existing rows and their `PLAN.md` links untouched** (those files really are named `PLAN.md` on disk; rewriting the links would break them). Don't rewrite the header or migrate old rows. The result is a mixed index where legacy experiments point at `PLAN.md` and new ones point at `DESIGN.md`; the reporter handles both names.
 
 ---
 
@@ -156,7 +158,7 @@ signals a level of ceremony the work doesn't have. Match the plan to the stakes:
 | **Full** | Paper submission, large sweep, expensive benchmark | Full template, all sections, statistical testing |
 
 When in doubt between two tiers, pick the smaller one — it's cheaper to add a section than to make
-a reader wade through padding. The plan is written to `experiments/<exp_id>/PLAN.md` — include the
+a reader wade through padding. The plan is written to `experiments/<exp_id>/DESIGN.md` — include the
 experiment ID and project name in the header.
 
 #### Lean template (sanity checks)
@@ -166,7 +168,7 @@ file-layout diagram, no baselines table, no reproducibility checklist. A few sen
 is the right length.
 
 ```markdown
-# Experiment Plan: [Descriptive Title]
+# Experiment Design: [Descriptive Title]
 **Experiment**: experiments/<exp_id>/ · **Project**: <project_name> · **Date**: YYYY-MM-DD · **Status**: Draft
 
 ## Hypothesis
@@ -189,7 +191,7 @@ This is the **maximal form**. For Standard-tier work, include the sections that 
 rest; for Full-tier, use all of them.
 
 ```markdown
-# Experiment Plan: [Descriptive Title]
+# Experiment Design: [Descriptive Title]
 **Experiment**: experiments/<exp_id>/  
 **Project**: <project_name>  
 **Date**: YYYY-MM-DD  
@@ -211,7 +213,7 @@ A single falsifiable sentence. Example:
 ## 3. File Layout for This Experiment
 ```
 experiments/<exp_id>/
-├── PLAN.md                  ← this file (experiment plan only)
+├── DESIGN.md                  ← this file (experiment design only)
 ├── scripts/                 ← run scripts and configs (decided in the implementation plan)
 ├── results/
 │   ├── <condition>/         ← metrics.json, checkpoints/
@@ -380,9 +382,9 @@ If spotted, add a ⚠️ warning inline in the plan.
 
 1. Generate the plan content at the depth the stakes call for (Step 2 / Step 3). Set the header **Status: Draft**.
 2. Scaffold the experiment folder if it doesn't exist (see Step 0).
-3. Write the plan to `experiments/<exp_id>/PLAN.md` with the **Write tool**.
+3. Write the plan to `experiments/<exp_id>/DESIGN.md` with the **Write tool**.
 4. Create or update `experiments/INDEX.md` with a row for this experiment (see Step 0).
-5. Confirm to the user: "Plan written to `experiments/<exp_id>/PLAN.md`; indexed in `experiments/INDEX.md`."
+5. Confirm to the user: "Plan written to `experiments/<exp_id>/DESIGN.md`; indexed in `experiments/INDEX.md`."
 6. Show a short summary in chat (hypothesis + next steps only — the full plan is in the file), then point to the implementation-planning handoff in Step 10.
 
 **Formatting rules:**
@@ -403,11 +405,11 @@ If spotted, add a ⚠️ warning inline in the plan.
 - **Result storage**: _"Are checkpoints and metrics staying under `results/<condition>/`, or do large artifacts need separate/remote storage?"_
 - **Environment**: _"Should the implementation plan pin the environment (e.g. `requirements.txt` / `environment.yml`) so the runs are reproducible from the recorded commit?"_
 
-Then point them to the next step: _"When you're ready to code this up, enter plan mode and ask for an implementation plan covering the scripts, configs, and code changes. **Once you approve that plan, save it as `experiments/<exp_id>/IMPLEMENTATION.md` (next to PLAN.md) before editing files** — the reporter relies on it to map conditions to configs and to spot where the build diverged from the design."_ That implementation plan is a separate artifact (it covers `scripts/`, `../../src/` utilities, config layout, and data-pipeline steps) — it is not written into `PLAN.md`, and this skill does not produce it. The only files this skill writes are `PLAN.md` and the `experiments/INDEX.md` row.
+Then point them to the next step: _"When you're ready to code this up, enter plan mode and ask for an implementation plan covering the scripts, configs, and code changes. **Once you approve that plan, save it as `experiments/<exp_id>/IMPLEMENTATION.md` (next to DESIGN.md) before editing files** — the reporter relies on it to map conditions to configs and to spot where the build diverged from the design."_ That implementation plan is a separate artifact (it covers `scripts/`, `../../src/` utilities, config layout, and data-pipeline steps) — it is not written into `DESIGN.md`, and this skill does not produce it. The only files this skill writes are `DESIGN.md` and the `experiments/INDEX.md` row.
 
-**Status lifecycle.** The `Status` field tracks which phase the experiment is in, so anyone opening `PLAN.md` or `INDEX.md` knows where it stands. The owners:
+**Status lifecycle.** The `Status` field tracks which phase the experiment is in, so anyone opening `DESIGN.md` or `INDEX.md` knows where it stands. The owners:
 - This skill writes **Draft** when it creates the plan.
-- Tell the user to flip it to **In Progress** (in both `PLAN.md` and the `INDEX.md` row) once runs are launched.
+- Tell the user to flip it to **In Progress** (in both `DESIGN.md` and the `INDEX.md` row) once runs are launched.
 - The reporter sets the terminal state (**Complete / Partial / Failed**) and the verdict when it writes `summary.md`.
 
 ---

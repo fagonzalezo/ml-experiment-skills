@@ -6,7 +6,7 @@ A collection of [Claude Code skills](https://docs.anthropic.com/en/docs/claude-c
 
 ### `ml-experiment-planner`
 
-Generates a structured research-design plan for a machine learning experiment and writes it to disk as `experiments/exp_<n>/PLAN.md`.
+Generates a structured research-design plan for a machine learning experiment and writes it to disk as `experiments/exp_<n>/DESIGN.md`.
 
 **Triggers on:** "experiment plan", "design an experiment", "ablation study", "how should I test", "benchmark this", "compare these approaches", etc.
 
@@ -28,9 +28,9 @@ Reads the experiment plan and result files, then writes a coherent `experiments/
 **Triggers on:** "write a report", "summarise my results", "document what happened", "I finished running my experiment", "generate a summary of exp_N", etc.
 
 **Produces:**
-- A structured report cross-referencing `PLAN.md`, `IMPLEMENTATION.md`, and `results/`
+- A structured report cross-referencing `DESIGN.md`, `IMPLEMENTATION.md`, and `results/`
 - Explicit callouts for missing data, build deviations, and reproducibility gaps
-- Updated `Status` and `Verdict` in `PLAN.md` and `INDEX.md`
+- Updated `Status` and `Verdict` in `DESIGN.md` and `INDEX.md`
 
 **Does not:** infer missing metrics from logs, silently skip planned conditions, or invent figures.
 
@@ -43,8 +43,8 @@ The two skills form a four-phase pipeline. Each phase leaves a file on disk; the
 ```
 planning                 implementation           execution        reporting
 ml-experiment-planner    (Claude plan mode)       (you run it)     ml-experiment-reporter
-writes PLAN.md        →  saves                 →  produces      →  writes reports/summary.md
-+ INDEX.md row           IMPLEMENTATION.md        results/         + updates PLAN.md Status
+writes DESIGN.md        →  saves                 →  produces      →  writes reports/summary.md
++ INDEX.md row           IMPLEMENTATION.md        results/         + updates DESIGN.md Status
                                                                    + updates INDEX.md row
 ```
 
@@ -60,7 +60,7 @@ Both skills assume the following directory structure inside your ML project:
 └── experiments/
     ├── INDEX.md                         ← experiment registry (planner creates, reporter updates)
     └── exp_<n>/
-        ├── PLAN.md                      ← research-design plan (planner writes)
+        ├── DESIGN.md                      ← research-design plan (planner writes)
         ├── IMPLEMENTATION.md            ← implementation plan (you save after plan-mode approval)
         ├── scripts/configs/             ← run scripts and config files
         ├── results/
@@ -124,7 +124,7 @@ If the skill loads, you'll see it start asking about your experiment hypothesis.
 I want to test whether focal loss improves F1 on my imbalanced dataset.
 ```
 
-The planner picks up the intent, asks clarifying questions if needed, chooses an appropriate plan tier (lean sanity check vs. full paper-grade), and writes `experiments/exp_<n>/PLAN.md`.
+The planner picks up the intent, asks clarifying questions if needed, chooses an appropriate plan tier (lean sanity check vs. full paper-grade), and writes `experiments/exp_<n>/DESIGN.md`.
 
 ### Create an implementation plan
 
@@ -144,7 +144,7 @@ git log -1 --format="%H %s" > experiments/exp_<n>/results/<condition>/git_commit
 Write a report for exp_3.
 ```
 
-The reporter reads `PLAN.md`, `IMPLEMENTATION.md`, `results/`, and any figures in `reports/figures/`, then writes `reports/summary.md` and updates the status fields in `PLAN.md` and `INDEX.md`.
+The reporter reads `DESIGN.md`, `IMPLEMENTATION.md`, `results/`, and any figures in `reports/figures/`, then writes `reports/summary.md` and updates the status fields in `DESIGN.md` and `INDEX.md`.
 
 ---
 
