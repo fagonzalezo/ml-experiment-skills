@@ -1,0 +1,1 @@
+aaaaaaaa11111111aaaaaaaa11111111aaaaaaaa feat: mnist training script with augmentation flag

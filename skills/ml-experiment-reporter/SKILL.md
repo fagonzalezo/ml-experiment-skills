@@ -1,301 +1,352 @@
 ---
 name: ml-experiment-reporter
 description: >
-  Writes a structured report on ML experiment results, grounded in the experiment's DESIGN.md
-  and the actual results files. Use this skill whenever a user wants to document, summarise,
-  or communicate the outcome of a machine learning experiment — including phrases like "write
-  a report", "summarise my results", "document what happened", "write up the experiment",
-  "generate a summary of exp_N", "what did my experiment show", or "I finished running my
-  experiment". Always use this skill when the user has completed (or partially completed)
-  an experiment and wants a written record of findings. The report is written to
-  experiments/exp_N/reports/summary.md. Do NOT use for planning new experiments
-  (use ml-experiment-planner instead) or for pure data analysis without a write-up goal.
+  Writes an evidence-grounded report on a machine learning experiment by reconciling what was
+  designed (DESIGN.md), what was built (IMPLEMENTATION.md) and what the runs produced (results/).
+  Use this skill whenever a user wants to document, summarise, or write up the outcome of an ML
+  experiment — phrases like "write a report", "summarise my results", "write up exp_3",
+  "document what happened", "what did my experiment show", "my runs finished", or "we only got
+  through half the ablations, write up what we have". Use it for finished, partial and failed
+  experiments alike. It writes experiments/exp_N/reports/summary.md, flags missing runs, build
+  deviations and unrecorded code versions instead of smoothing them over, and sets the
+  experiment's final Status and Verdict. Do NOT use for planning a new experiment (use
+  ml-experiment-planner), for exploratory data analysis with no write-up, or for drafting a
+  paper section from several experiments at once.
 ---
 
 # ML Experiment Reporter
 
-Reads the experiment plan and results, then writes a coherent `summary.md` report that
-documents what was done, what was found, and what it means — grounded strictly in evidence.
+Reads an experiment's design, its build plan, and the results on disk, and writes
+`reports/summary.md`: what was done, what was found, and what it means.
 
----
+One principle runs through everything below: **every claim in the report traces to a file.** The
+people who read a report mostly never open `results/`, so a plausible number that isn't in the
+files does more damage than a visible gap. When the evidence is missing, the report says it is
+missing.
 
-## Project Structure (reminder)
+<!-- contract:start (this block is byte-identical in ml-experiment-planner and ml-experiment-reporter) -->
+## Shared Layout Contract
+
+The planner and the reporter never talk to each other; they find each other's work by path. Both
+therefore assume this layout inside the user's project:
 
 ```
 <Project>/
-├── docs/
-├── src/
-├── data/
+├── docs/  src/  data/                  ← shared across experiments
 └── experiments/
-    ├── INDEX.md                         ← update: set this exp's Status + Verdict row
+    ├── INDEX.md                        ← registry, one row per experiment (planner adds, reporter updates)
     └── exp_<n>/
-        ├── DESIGN.md                      ← input: read this first (the research design)
-        ├── IMPLEMENTATION.md            ← input: how it was built (condition→config map, deviations)
-        ├── scripts/configs/             ← input: read relevant configs
+        ├── DESIGN.md                   ← planner: what is tested and how it will be judged
+        ├── IMPLEMENTATION.md           ← planner: how it is built and run; deviations are logged here
+        ├── scripts/                    ← run scripts; configs in scripts/configs/
         ├── results/
-        │   └── <condition>/
-        │       ├── metrics.json         ← input: primary results
-        │       ├── git_commit.txt       ← input: code version
-        │       └── checkpoints/
+        │   └── <condition_id>/         ← directory name = a condition id from DESIGN.md
+        │       └── seed_<s>/           ← one directory per run
+        │           ├── metrics.json    ← that run's final metrics
+        │           ├── git_commit.txt  ← code version the run was launched from
+        │           └── checkpoints/
         └── reports/
-            ├── figures/                 ← input: any plots already generated
-            └── summary.md              ← OUTPUT: written here
+            ├── inventory.json          ← reporter: machine-readable inventory of results/
+            ├── figures/
+            └── summary.md              ← reporter: the report
 ```
 
-The four experiment phases each leave an artifact — `DESIGN.md` (design) → `IMPLEMENTATION.md` (build) → `results/` (execution) → `summary.md` (this report). `DESIGN.md` says what was *intended*; `IMPLEMENTATION.md` says what was *built*; `results/` shows what *happened*. A faithful report reconciles all three.
+- **Condition ids.** Every condition in `DESIGN.md` has a short id (`lowercase_with_underscores`)
+  and its runs live in `results/<that id>/`. Matching by id is what lets the reporter tell "not
+  run" from "named differently".
+- **One directory per run.** `seed_<s>/metrics.json` is a flat JSON object holding that run's
+  final metrics, including `seed` and the primary metric under the exact key `DESIGN.md` names.
+  Per-seed files are what make a spread or a significance test computable; a pre-averaged number
+  is not enough.
+- **`git_commit.txt`, one per run.** Line 1 is `<full sha> <subject>`. A second line starting
+  with `DIRTY` records that tracked files had uncommitted changes at launch:
+  ```bash
+  git log -1 --format="%H %s" > "$RUN_DIR/git_commit.txt"
+  git diff --quiet HEAD || echo "DIRTY: uncommitted changes at launch" >> "$RUN_DIR/git_commit.txt"
+  ```
+- **Status** says how far *execution* got: `Draft` (planner) → `In Progress` (set when the first
+  run launches — a step in `IMPLEMENTATION.md`) → `Complete` / `Partial` / `Failed` (reporter).
+  Complete: every planned run produced the primary metric. Partial: some planned runs are
+  missing, but at least one planned comparison can be made. Failed: no planned comparison can be
+  made.
+- **Verdict** says what the results mean for the *hypothesis*: ✅ Supported / ❌ Refuted /
+  ⚠️ Inconclusive, decided by the decision rule in `DESIGN.md`. The two are independent — a
+  hypothesis cleanly refuted by a full set of runs is `Complete` + ❌, not `Failed`.
+- **Both fields live in two places**, the `DESIGN.md` header and the experiment's `INDEX.md` row,
+  and must agree.
+- **Older experiments** may have `PLAN.md` instead of `DESIGN.md`, no `IMPLEMENTATION.md`, or
+  metrics directly in `results/<condition_id>/`. Read them as they are; don't rename or migrate
+  them.
+<!-- contract:end -->
 
 ---
 
-## Core Workflow
+## Workflow
 
-### Step 0. Locate Inputs
+### 1. Locate the experiment
 
-1. Ask the user for the experiment folder path if not already provided (e.g., `myproject/experiments/exp_3`).
-2. Read `DESIGN.md` from the experiment root — the ground truth for what was *intended*.
-3. Read `IMPLEMENTATION.md` from the experiment root if present — the record of what was *built* (which config/script produced each condition, and any decisions that departed from the design). This is what lets §3 report build-level deviations rather than only "did this condition run." If it's absent, note that under caveats (§8) — the build can then only be inferred from configs and git.
-4. Scan `results/` to discover which conditions were actually run:
-   ```bash
-   ls experiments/<exp_id>/results/
-   # For each condition:
-   cat experiments/<exp_id>/results/<condition>/metrics.json
-   cat experiments/<exp_id>/results/<condition>/git_commit.txt
-   ```
-5. List any figures already in `reports/figures/`.
-6. Read relevant configs from `scripts/configs/` if metric context is unclear.
-7. Optionally read `experiments/INDEX.md` to find related experiments to reference in §9.
+Use the experiment folder the user names (e.g. `experiments/exp_3`), or ask for it. Before
+reading further, check it looks like an experiment folder — a `DESIGN.md` (or an older
+`PLAN.md`) and/or a `results/` directory.
 
-Before reading, sanity-check that the folder actually looks like a skill-managed experiment — it should contain a `DESIGN.md` (or a legacy `PLAN.md` — see below) and/or a `results/` directory. If it matches, proceed silently. If it clearly doesn't (no `results/` *and* no `DESIGN.md`/`PLAN.md`, or a flat project with metrics scattered elsewhere), don't guess and don't fabricate a report from a structure you can't locate. Tell the user:
-> ⚠️ This folder doesn't match the layout I expect (`DESIGN.md` + `results/<condition>/`). Point me to where the plan and per-condition results actually live, or run the ml-experiment-planner skill first to set up the structure.
+- **Neither is there**, or the metrics are scattered through a flat project: don't guess and
+  don't assemble a report from a structure you can't locate. Say so and work only from the paths
+  the user gives back:
+  > ⚠️ This folder doesn't match the layout I expect (`DESIGN.md` + `results/<condition_id>/seed_<s>/`).
+  > Point me to where the design and the per-run results live, or run the ml-experiment-planner
+  > skill first to set up the structure.
+- **Results but no design file**: warn that there is nothing to cross-reference against, then
+  report the results alone. With no pre-specified decision rule the verdict is ⚠️ Inconclusive,
+  and the report says that is the reason.
 
-Then work only from the paths they give back.
+### 2. Read the plans
 
-**Backward compatibility.** Older experiments (created before this skill renamed the plan file) keep the research design in `PLAN.md` rather than `DESIGN.md`. If you find a `PLAN.md` at the experiment root and no `DESIGN.md`, treat that `PLAN.md` as the design file — read it as the ground truth, apply every `DESIGN.md §N` cross-reference below to it, and write the status update back into it. Don't rename the file or warn about its name; only fall through to the "missing" warning below when *neither* `DESIGN.md` nor `PLAN.md` exists.
+From `DESIGN.md`, take: the **tier**, the hypothesis sentence, the **Conditions** table (ids and
+roles), the primary metric and its `metrics.json` key, the planned seeds, and the decision rule.
+From `IMPLEMENTATION.md`, take: the run matrix (which config and command produced each
+condition), what every run was meant to record, and the **Deviations Log**.
 
-If neither `DESIGN.md` nor a legacy `PLAN.md` is present but `results/` exists, warn the user:
-> ⚠️ No DESIGN.md found. The report cannot be cross-referenced against a plan. Proceeding with results only — consider creating a plan retroactively with the ml-experiment-planner skill.
+If `IMPLEMENTATION.md` is absent, carry on and note it under caveats — build deviations can then
+only be inferred from configs and git, not confirmed.
 
----
+Older designs may have numbered sections, no tier, and conditions described in prose without
+ids. Treat a missing tier as Standard, map each described condition to a `results/` directory by
+your best reading, and print that mapping in the report so the reader can check it.
 
-### Step 1. Reconcile Plan vs. Reality
+### 3. Inventory the results
 
-Before writing, build a mental diff between what was planned and what was run:
+Run the bundled script — `scripts/collect_results.py`, in the same directory as this SKILL.md —
+with the values you just read from the design:
 
-| Check | How |
-|-------|-----|
-| All planned conditions run? | Compare DESIGN.md §5 conditions vs. `results/` subdirs |
-| All planned baselines run? | Compare DESIGN.md §4 baselines vs. `results/` subdirs |
-| All planned ablations run? | Compare DESIGN.md §6 vs. `results/` subdirs |
-| Built as designed? | Compare `IMPLEMENTATION.md` (configs/scripts per condition) vs. DESIGN.md intent |
-| Primary metric present? | Check `metrics.json` keys vs. DESIGN.md §7 |
-| Expected seed count met? | Count seed entries per condition |
-| Git commit recorded? | Check `git_commit.txt` exists per condition |
-
-Flag any gap as a **"Missing Data"** note in the report — never silently skip a planned condition. There are two distinct kinds of divergence to keep separate: a *coverage* gap (a planned condition wasn't run) and a *build* deviation (a condition was run, but `IMPLEMENTATION.md` shows it was built differently than the design called for). The first goes in §8 Missing Data; the second goes in §3 Deviations.
-
----
-
-### Step 2. Parse Metrics
-
-Extract results from each `metrics.json`. Expected shape (flexible — adapt to what's present):
-
-```json
-{
-  "seed": 42,
-  "epoch": 50,
-  "val_loss": 0.312,
-  "test_f1_macro": 0.821,
-  "test_auroc": 0.934,
-  "train_time_hours": 2.7
-}
+```bash
+python <skill_dir>/scripts/collect_results.py experiments/<exp_id> \
+    --primary <primary metric key> --baseline <baseline condition id> \
+    --expect <id1>,<id2>,<id3> --seeds <planned seeds per condition> \
+    --out experiments/<exp_id>/reports/inventory.json
 ```
 
-Aggregate across seeds:
-```python
-import json, pathlib, statistics
+It reads only what is on disk and returns, as JSON: every condition directory and run it found;
+per-metric mean, std and n; the per-seed values of the primary metric; coverage against the
+planned conditions and seed count; each condition's paired comparison with the baseline; and the
+recorded commit of every run, including which runs have none, which were launched dirty, and
+whether all runs share one commit. It also lists the configs, figures and environment files
+that exist.
 
-conditions = {}
-for p in pathlib.Path("results").iterdir():
-    files = list(p.glob("metrics.json"))  # or metrics_seed*.json
-    vals = [json.load(open(f)) for f in files]
-    primary = [v["<primary_metric>"] for v in vals]
-    conditions[p.name] = {
-        "mean": statistics.mean(primary),
-        "stdev": statistics.stdev(primary) if len(primary) > 1 else None,
-        "n": len(primary)
-    }
+Take the report's numbers from this output rather than recomputing them, and round only for
+display. Saving it as `reports/inventory.json` gives every number in the report a source someone
+can open. A few things the script can't settle for you:
+
+- A run flagged `looks_pre_aggregated` holds a mean/std rather than one run's values. Report it
+  as given, with n unknown, and do no statistics on it.
+- Metrics stored as CSV, YAML or per-epoch logs are invisible to the script. Read them directly
+  and say in the report which files the numbers came from.
+- If Python isn't available, do the same inventory by reading the files, and say so.
+
+### 4. Reconcile design, build and results
+
+Three kinds of divergence come out of the comparison. They mean different things to a reader,
+so they go to different places in the report:
+
+| Kind | What it looks like | Where it goes |
+|------|--------------------|---------------|
+| **Coverage gap** | A planned condition has no results, fewer seeds than planned, or no primary metric | *Missing Data & Caveats*; its row stays in the results tables marked _Not run_ |
+| **Build deviation** | A condition ran, but not as designed — an entry in the Deviations Log, or a config that disagrees with `DESIGN.md` | *Setup As Run → Deviations* |
+| **Provenance gap** | A run has no `git_commit.txt`, was launched `DIRTY`, or compared conditions ran from different commits | *Code Version* |
+
+To find build deviations, read the config of each condition (the run matrix says which) and
+check the settings `DESIGN.md` actually specifies. Don't rely on the Deviations Log alone — it
+only holds what someone remembered to write down.
+
+When compared conditions come from different commits, the difference between them may not be
+only the intended intervention. If the repository is at hand, `git diff --stat <sha_a> <sha_b>`
+shows what else changed; report what the diff shows, and if a commit isn't in the repository,
+report that instead.
+
+### 5. Decide Status and Verdict
+
+**Status** follows from coverage, using the contract's definitions: Complete, Partial or Failed.
+
+**Verdict** is the design's decision rule applied as written — not a fresh judgement made after
+seeing the numbers. It is ⚠️ Inconclusive whenever the rule cannot be applied as pre-specified:
+
+- the result falls between the *supported* and *refuted* thresholds;
+- the primary comparison is missing a side, or has fewer seeds than the rule assumed;
+- the threshold is met on the means but the statistical criterion the design named is not;
+- a deviation or provenance gap undercuts the comparison itself (for example the proposed
+  condition ran from a different, or dirty, tree than the baseline) — say which one;
+- the design has no decision rule.
+
+### 6. Write the report
+
+Write `experiments/<exp_id>/reports/summary.md` with the Write tool. Size it to the design's
+tier: a Lean design gets the Lean report, since a ten-section write-up of a two-run sanity check
+hides the answer. If a `summary.md` already exists, read it first; the new report replaces it
+and carries a line under the header saying what it supersedes and why (e.g. "Supersedes the
+report of 2026-05-30: two more conditions finished").
+
+**Lean report:**
+
+```markdown
+# Experiment Report: [Title from DESIGN.md]
+**Experiment**: experiments/<exp_id>/ · **Report date**: YYYY-MM-DD · **Status**: <status> · **Verdict**: <verdict>
+
+## Summary
+Two or three sentences: the hypothesis, whether it held, the number that decides it.
+
+## Results
+| Condition id | <primary metric> per seed | Mean ± std | Δ vs. baseline | Commit |
+|--------------|---------------------------|------------|----------------|--------|
+
+Decision rule (from the design): "<quoted>" → met / not met / cannot be evaluated because <…>.
+
+## Deviations & Missing Data
+Deviations Log entries, config mismatches, runs that didn't finish, missing or dirty
+`git_commit.txt` — or "None: ran as planned."
+
+## Next Step
+One or two lines.
 ```
 
-If metrics files use a different structure (e.g., CSV, YAML, per-epoch logs), adapt accordingly — read what's there.
-
----
-
-### Step 3. Report Structure
-
-Write to `experiments/<exp_id>/reports/summary.md` using this template:
+**Standard / Full report:**
 
 ```markdown
 # Experiment Report: [Title from DESIGN.md]
 **Experiment**: experiments/<exp_id>/  
 **Project**: <project_name>  
 **Report date**: YYYY-MM-DD  
-**Plan date**: <date from DESIGN.md>  
+**Design date**: <date from DESIGN.md>  
 **Author**: <name or TBD>  
-**Status**: Complete / Partial / Failed
-
----
+**Status**: <Complete | Partial | Failed>  
+**Verdict**: <✅ Supported | ❌ Refuted | ⚠️ Inconclusive>
 
 ## 1. Summary
-2–4 sentences. State the hypothesis, whether it was supported, and the key finding.
-Write this for someone who won't read the rest of the report.
-
----
+Two to four sentences for someone who reads nothing else: the hypothesis, whether it was
+supported, the key number. If a deviation or gap materially limits the conclusion, flag it here
+with ⚠️.
 
 ## 2. Hypothesis & Verdict
-**Hypothesis (from plan):** _copy exact hypothesis sentence from DESIGN.md_
+**Hypothesis (from the design):** _the exact sentence_
 
-**Verdict:** ✅ Supported / ❌ Refuted / ⚠️ Inconclusive
+**Verdict:** <verdict>
 
-**Evidence:** 1–2 sentences citing the primary metric delta and whether it crossed the
-success threshold defined in the plan.
+**Evidence:** one or two sentences — the primary-metric difference, and how it sits against the
+decision rule.
 
----
-
-## 3. Experimental Setup (as run)
-Describe what was actually built and run, drawing on `IMPLEMENTATION.md` and the configs. Note any deviation between the design (`DESIGN.md`) and the build (`IMPLEMENTATION.md` / configs). If nothing changed, write "As described in DESIGN.md." If there is no `IMPLEMENTATION.md`, say so — deviations can then only be inferred from configs and git, not confirmed.
+## 3. Setup As Run
+What was actually built and run, from the configs and run artifacts.
 
 - **Dataset**: <name, version, split>
-- **Model**: <architecture, config>
-- **Training**: <optimizer, LR, batch size, epochs actually run>
-- **Hardware**: <GPU, actual runtime>
-- **Deviations from plan**: <list any, or "None">
-
----
+- **Model**: <architecture>
+- **Training**: <optimizer, LR, batch size; epochs completed>
+- **Hardware / runtime**: <from run artifacts, or "not recorded">
+- **Deviations from the design**: <each Deviations Log entry and each config mismatch, with the
+  conditions affected — or "None found">
 
 ## 4. Code Version
-| Condition | Git commit | Commit message |
-|-----------|-----------|----------------|
-| baseline  | `a3f9c21` | feat: initial baseline |
-| proposed  | `d84e012` | feat: switch to focal loss |
+| Condition id | Commit(s) | Subject | Clean tree? | Runs without a recorded commit |
+|--------------|-----------|---------|-------------|--------------------------------|
 
-⚠️ Flag any condition where `git_commit.txt` is missing.
-
----
+One line on whether every compared condition ran from the same commit, and if not, what differs.
 
 ## 5. Results
 
-### 5.1 Primary Metric
-| Condition | Mean ± Std | N seeds | vs. best baseline (Δ) |
-|-----------|-----------|---------|----------------------|
-| baseline_ce | 0.812 ± 0.008 | 5 | — |
-| proposed_focal | 0.834 ± 0.006 | 5 | **+0.022** ✅ |
+### 5.1 Primary metric: <name> (`<key>`)
+| Condition id | Role | Mean ± std | n seeds | Δ vs. <baseline id> |
+|--------------|------|------------|---------|---------------------|
 
-> Success threshold from plan: Δ ≥ 0.02. _Threshold [met / not met]._
+Every planned condition has a row; one that didn't run reads _Not run_.
 
-### 5.2 Secondary Metrics
-Table or prose for secondary metrics defined in DESIGN.md §7.
+### 5.2 Secondary metrics
+### 5.3 Ablations (if any)
+| Condition id | What it removes | Primary metric | Δ vs. full method | Reading |
+|--------------|-----------------|----------------|-------------------|---------|
 
-### 5.3 Ablation Results (if applicable)
-| Ablation | Primary metric | Δ vs. full model | Interpretation |
-|----------|---------------|-----------------|----------------|
-| w/o projection head | 0.819 ± 0.010 | −0.015 | head contributes ~1.5 F1 pts |
-
-### 5.4 Learning Curves (if figures available)
-Reference figures: `reports/figures/<name>.png`  
-Briefly describe what the curves show (convergence, overfitting, instability).
-
----
+### 5.4 Figures
+Existing files in `reports/figures/`, by relative path, each with a sentence on what it shows.
+Then, if useful ones are missing: "Suggested figures: …".
 
 ## 6. Statistical Analysis
-- **Test used**: paired t-test / Wilcoxon signed-rank / none (state why)
-- **p-value**: <value> (threshold: 0.05)
-- **Confidence interval**: [low, high] at 95%
-- **Conclusion**: result is / is not statistically significant
+Primary comparison: <proposed id> vs. <baseline id> on `<key>`, paired over <n> shared seeds.
+- **Per-seed differences**: …
+- **Mean difference**: … (95% CI [low, high], paired t interval)
+- **Sign-flip permutation test**: p = … (smallest p reachable with <n> pairs: …)
+- **Reading**: …
 
-If N seeds < 3: ⚠️ note that statistical testing is unreliable.
+Other comparisons are exploratory unless the design pre-specified them.
 
-A significance test needs the **per-seed values**, not just an aggregate. If the results files
-only store a pre-computed mean ± std (no individual seed entries to recover), say so plainly —
-"Per-seed values not available; cannot compute a significance test from aggregate stats alone" —
-and do not invent a p-value or CI. This is the same evidence-grounded rule as everywhere else:
-report what the files support, flag what they don't.
-
----
-
-## 7. Comparison to Expected Results
-Refer back to DESIGN.md §8 (Expected Results & Decision Rules).
-
-| Expected | Observed | Match? |
-|----------|----------|--------|
-| Focal loss ≥ +2 F1 pts | +2.2 F1 pts | ✅ |
-| No regression on AUROC | AUROC −0.003 | ✅ within noise |
-
----
+## 7. Comparison to Decision Rules
+| Rule from the design | Observed | Met? |
+|----------------------|----------|------|
 
 ## 8. Missing Data & Caveats
-List every planned condition, ablation, or metric that was NOT completed, and why (if known).
-If everything completed: "All planned runs completed."
+| Condition id | Planned seeds | Runs with the primary metric | Gap |
+|--------------|---------------|------------------------------|-----|
 
----
+Then, in prose: each planned condition, seed or metric that is missing and why (if known);
+conditions found in `results/` that the design never planned; whether `IMPLEMENTATION.md` was
+available. If nothing is missing: "All planned runs completed."
 
 ## 9. Conclusions & Next Steps
-- **What this experiment established** (1–2 bullets)
-- **What remains uncertain** (1–2 bullets)
-- **Recommended follow-up experiments** (reference existing experiment IDs from `INDEX.md` where relevant, or describe new ones). Each new experiment closes the loop back to planning: _"To set up `exp_<n+1>`, use the ml-experiment-planner skill."_
-
----
+- **What this experiment established**
+- **What remains uncertain**
+- **Recommended follow-ups** — refer to existing experiments in `INDEX.md` by id where relevant;
+  a new one starts with the ml-experiment-planner skill.
 
 ## 10. Reproducibility Record
-| Item | Status |
-|------|--------|
-| Seeds logged | ✅ / ❌ |
-| Configs versioned | ✅ / ❌ |
-| Git commits recorded | ✅ / ❌ (see §4) |
-| Checkpoints saved | ✅ / ❌ |
-| Environment frozen | ✅ / ❌ |
-| Experiment tracker linked | ✅ / ❌ (run URL if available) |
+| Item | Status | Evidence |
+|------|--------|----------|
+| Seeds logged | | `seed` in each metrics.json |
+| Configs saved | | files in scripts/configs/ |
+| Git commit per run | | see §4 |
+| Launched from a clean tree | | no DIRTY lines |
+| Checkpoints saved | | |
+| Environment pinned | | path of the lock/requirements file |
+| Tracker linked | | run URL |
 ```
 
----
+**Rules of evidence** — the reasons behind the template's shape:
 
-### Step 4. Writing Guidelines
+- **Numbers come from files.** Each one is in `inventory.json` or in a file the report names.
+- **"As run" means observed.** Epochs completed, runtime and hardware come from run artifacts
+  or configs. If only the plan states a value, write it as "planned: … (not recorded by the
+  run)". Copying the design into *Setup As Run* turns an intention into a false record.
+- **A ✅ needs a path.** In the Reproducibility Record, mark ✅ only where the Evidence column
+  can cite a file, ❌ where the evidence shows it is absent, and "unverified" otherwise.
+- **Missing is stated, not filled in.** A planned condition that didn't run keeps its row,
+  marked _Not run_. If the primary metric is absent from the results files, say so; don't
+  reconstruct it from logs or stand a secondary metric in for it.
+- **No statistics without per-seed values.** With fewer than two shared seeds, or with only
+  pre-aggregated numbers, write "Per-seed values not available; no test computed" and give no
+  p-value or interval. Below six pairs a permutation p cannot go under 0.05 whatever the data,
+  so lean on the interval and the per-seed differences and say why. If the design called for a
+  test the script doesn't compute, run it in code and show the command, or say it was not
+  computed.
+- **Figures that exist.** Reference files in `reports/figures/`; don't describe plots that
+  aren't there.
+- **Write for a reader who hasn't seen the design.** Specific numbers over adjectives, and no
+  claim of success or failure beyond what the numbers carry. Use ✅ / ❌ / ⚠️ consistently.
 
-**Tone and style:**
-- Write for a technically literate reader who has not read the plan
-- Be precise: always cite specific numbers, not vague qualitative claims
-- Never claim success or failure beyond what the numbers support
-- Use ✅ / ❌ / ⚠️ consistently for verdicts and status items
+### 7. Close out the experiment
 
-**On deviations from the plan:**
-- Any deviation (different hyperparameters, fewer seeds, different dataset split) must be called out explicitly in §3 — never silently normalised
-- If a deviation is significant, add a ⚠️ in the summary (§1)
+1. Set the `Status` field in `DESIGN.md` to the report's status with a one-word Edit (in
+   `PLAN.md` for an older experiment). Leave the rest of the file alone — it is the record of
+   what was intended, and rewriting it after the fact would erase that.
+2. In the experiment's `experiments/INDEX.md` row, set the same Status and the Verdict, linking
+   the verdict to the report: `[✅](exp_3/reports/summary.md)`. If there is no `INDEX.md`, skip
+   this.
+3. Tell the user where the report is, and show the Summary and the Conclusions in chat so they
+   get the takeaways without opening the file.
 
-**On missing results:**
-- If a condition is missing, write `_Not run_` in the table — never omit the row
-- If the primary metric is absent from results files, say so explicitly — do not infer it from logs or secondary metrics without flagging
-
-**On figures:**
-- Reference existing figures in `reports/figures/` by relative path
-- Do not generate or describe figures that don't exist
-- If useful figures are missing, add a "Suggested figures" note at the end of §5
-
----
-
-### Step 5. File Writing
-
-Write the report to `experiments/<exp_id>/reports/summary.md` with the **Write tool**, not a bash heredoc — the report is a long Markdown document with its own code fences and tables, which `cat << EOF` tends to mangle.
-
-After writing the report, close out the experiment's lifecycle bookkeeping — this is the terminal state the planner's status lifecycle hands off to the reporter:
-1. Confirm to the user: "Report written to `experiments/<exp_id>/reports/summary.md`."
-2. **Update `DESIGN.md`'s `Status`** field to match the report (Complete / Partial / Failed) with an `Edit`. This is the one edit the reporter makes outside `reports/` — a single-field bookkeeping change so the plan reflects reality; do not rewrite any other part of `DESIGN.md`. (For a legacy experiment whose design lives in `PLAN.md`, edit the `Status` field there instead — same single-field change, in whichever file holds the design.)
-3. **Update the experiment's row in `experiments/INDEX.md`** with the same Status and the verdict (✅ / ❌ / ⚠️), so the campaign view stays current. If `INDEX.md` doesn't exist, skip this (an older project may predate the convention).
-4. Show the §1 Summary and §9 Conclusions in chat — the user should not need to open the file to get the key takeaways.
+Those two edits and the files under `reports/` are everything this skill writes. It does not
+touch `IMPLEMENTATION.md`, the configs, or anything in `results/`.
 
 ---
 
 ## Example Invocations
 
-- "Write a report for exp_3" → read DESIGN.md + results/, write full summary.md
-- "Summarise what happened in my contrastive loss experiment" → locate exp folder, write report
-- "My experiment finished, document the results" → ask for exp path, then full report
-- "Write up exp_2, we didn't finish all the ablations" → full report with §8 missing data noted
-- "Generate a report, the results are in experiments/chexpert/exp_4" → use provided path directly
+- "Write a report for exp_3" → read both plans, inventory `results/`, write the report
+- "My experiment finished, document the results" → ask which experiment, then report
+- "Write up exp_2, we didn't finish all the ablations" → Partial; the missing ablations keep
+  their rows and are listed under Missing Data
+- "What did the augmentation sanity check show?" → Lean design, Lean report
+- "The runs all crashed after epoch 2, write up what we have" → Failed; verdict Inconclusive

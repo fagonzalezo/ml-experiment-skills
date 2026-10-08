@@ -1,0 +1,138 @@
+{
+  "skill_name": "ml-experiment-skills",
+  "setup": "Each eval names one fixture project in `files`. Copy that directory to a fresh scratch location outside any git repository and run the prompt with the copy as the working directory, so runs never modify the fixtures and never see each other's output.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "planner-vague-prompt",
+      "skill": "ml-experiment-planner",
+      "prompt": "I want to test my new loss function.",
+      "files": ["evals/fixtures/lean_project"],
+      "expected_output": "One batch of focused questions; nothing written until they are answered.",
+      "expectations": [
+        "Asks between two and four clarifying questions in a single message",
+        "The questions cover at least the task/dataset and what the loss is being compared against",
+        "No DESIGN.md or IMPLEMENTATION.md is written before the questions are answered"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "planner-lean-sanity-check",
+      "skill": "ml-experiment-planner",
+      "prompt": "quick sanity check before I go home: does label smoothing 0.1 help the MNIST CNN in this project at all? one seed is fine, I have about an hour of GPU. compare on test accuracy, call it a win if it's up by 0.2 points.",
+      "files": ["evals/fixtures/lean_project"],
+      "expected_output": "Lean DESIGN.md and Lean IMPLEMENTATION.md in experiments/exp_2/, a new INDEX.md row, no code written.",
+      "expectations": [
+        "experiments/exp_2/DESIGN.md exists and its header says Tier: Lean and Status: Draft",
+        "DESIGN.md has only the Lean sections (Hypothesis, Setup, Conditions, Metric & Decision) — no risk register, compute table or reproducibility checklist",
+        "DESIGN.md has a Conditions table with an id for each condition and names the metrics.json key of the primary metric",
+        "DESIGN.md contains no script paths, commands or code",
+        "experiments/exp_2/IMPLEMENTATION.md exists with a Run Matrix whose condition ids are exactly those in DESIGN.md",
+        "IMPLEMENTATION.md reuses the existing src/train.py and says a label-smoothing option has to be added to it, rather than proposing a new training script",
+        "IMPLEMENTATION.md includes the git_commit.txt commands and an empty Deviations Log",
+        "experiments/INDEX.md has a new exp_2 row with Status Draft, and the exp_1 row is unchanged",
+        "No file is created or modified under src/ or experiments/exp_2/scripts/",
+        "The reply asks the user to review both documents and does not mention plan mode"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "planner-standard-sweep",
+      "skill": "ml-experiment-planner",
+      "prompt": "Plan the follow-up to exp_1 in this project: a sweep over the focal-loss gamma in {0.5, 1, 2, 5} against the cross-entropy baseline on the same CheXpert split, 3 seeds each. Runs take about 2.5 GPU-hours and I have 40 GPU-hours. I want to be able to say which gamma, if any, beats CE on test macro-F1.",
+      "files": ["evals/fixtures/gaps_project"],
+      "expected_output": "Standard-tier DESIGN.md and IMPLEMENTATION.md in experiments/exp_2/ with matching condition ids and a pre-specified decision rule.",
+      "expectations": [
+        "experiments/exp_2/DESIGN.md exists with Tier: Standard and Status: Draft",
+        "The Conditions table lists five conditions (the baseline and four gamma values), each with an id",
+        "The primary metric is named together with its metrics.json key",
+        "The Decision Rules section states supported, refuted and inconclusive outcomes",
+        "The design uses the same seeds for every condition",
+        "The design does not rest the decision on reaching p < 0.05 with 3 seeds, or says explicitly that this is unreachable with 3 seeds",
+        "The design addresses comparing four gamma values against one baseline (a primary comparison, a multiplicity correction, or labelling the rest exploratory)",
+        "The compute budget is worked out as 15 runs and 37.5 GPU-hours against the 40 available",
+        "experiments/exp_2/IMPLEMENTATION.md has a Run Matrix with exactly the same five condition ids, each with a config and a command",
+        "The git_commit.txt commands appear in IMPLEMENTATION.md and not in DESIGN.md",
+        "IMPLEMENTATION.md has an Execution Order that includes setting Status to In Progress, and an empty Deviations Log",
+        "experiments/INDEX.md gains an exp_2 row and the exp_1 row is unchanged",
+        "No scripts or configs are written"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "planner-nonstandard-layout",
+      "skill": "ml-experiment-planner",
+      "prompt": "design an experiment for this repo: does LR warmup actually matter for my BERT sentiment fine-tune, or can I drop it?",
+      "files": ["evals/fixtures/flat_project"],
+      "expected_output": "A warning that the project doesn't follow the expected layout, with the two options, before anything is written into it.",
+      "expectations": [
+        "Tells the user the project does not follow the experiments/exp_N layout",
+        "Offers both options: create the structure alongside the existing files, or write the plan where the user points",
+        "train.py, README.md and outputs/ are not moved, renamed or modified",
+        "Nothing is written into the project before the user has chosen"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "reporter-gaps-and-confounds",
+      "skill": "ml-experiment-reporter",
+      "prompt": "Write up exp_1. We ran out of budget before the ablation.",
+      "files": ["evals/fixtures/gaps_project"],
+      "expected_output": "A Partial report that keeps coverage gaps, build deviations and provenance gaps apart, and does not call the hypothesis supported on a confounded comparison.",
+      "expectations": [
+        "experiments/exp_1/reports/summary.md exists",
+        "experiments/exp_1/reports/inventory.json exists",
+        "Status is Partial",
+        "Verdict is Inconclusive, and the report names the confound (learning rate and/or commit difference between the compared conditions)",
+        "focal_g2_no_reweight has a row in the results marked as not run, and is listed under Missing Data",
+        "The logged batch-size change (64 to 32) for focal_g2 is reported as a deviation",
+        "The unlogged learning-rate mismatch (design 1e-3, focal_g2 config 3e-4) is reported as a deviation",
+        "The missing git_commit.txt for focal_g2 seed 2 is flagged",
+        "The DIRTY launch of focal_g2 seed 1 is flagged",
+        "The report says baseline_ce and focal_g2 ran from different commits",
+        "Primary-metric means are reported as 0.812 for baseline_ce and 0.834 for focal_g2, with a mean paired difference of about 0.022",
+        "The 95% interval on the paired difference is reported as roughly [0.015, 0.030]",
+        "The report does not claim statistical significance at p < 0.05; any p-value given is 0.25",
+        "Setup As Run does not present hardware as observed fact (it is not recorded in the run artifacts)",
+        "DESIGN.md differs from the fixture only in its Status line, which now reads Partial",
+        "The exp_1 row in experiments/INDEX.md shows Partial and the inconclusive verdict",
+        "IMPLEMENTATION.md, scripts/ and results/ are unchanged"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "reporter-aggregate-only",
+      "skill": "ml-experiment-reporter",
+      "prompt": "can you summarise exp_1 for me? results are in.",
+      "files": ["evals/fixtures/aggregate_project"],
+      "expected_output": "A report that gives the stored aggregates as they are and declines to compute statistics that need per-seed values.",
+      "expectations": [
+        "experiments/exp_1/reports/summary.md exists",
+        "Reports 76.21 ± 0.34 for adam and 76.95 ± 0.41 for lion as stored aggregates",
+        "States that per-seed values are not available",
+        "Contains no p-value and no confidence interval",
+        "Verdict is Inconclusive, with the reason that the decision rule's paired interval cannot be computed",
+        "Notes that IMPLEMENTATION.md is absent",
+        "Does not create experiments/INDEX.md",
+        "DESIGN.md differs from the fixture only in its Status line"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "reporter-lean",
+      "skill": "ml-experiment-reporter",
+      "prompt": "what did the random crop sanity check show? write it up",
+      "files": ["evals/fixtures/lean_project"],
+      "expected_output": "A short Lean-shaped report, Complete and Supported, with no statistics invented for a single seed.",
+      "expectations": [
+        "experiments/exp_1/reports/summary.md exists and follows the Lean report shape (about four sections, not the ten-section template)",
+        "Status is Complete",
+        "Verdict is Supported, citing the +0.29 point difference against the 0.2 threshold",
+        "Reports test accuracy 99.12 for baseline and 99.41 for random_crop",
+        "Contains no p-value, standard deviation or confidence interval",
+        "DESIGN.md Status reads Complete and the rest of the file is unchanged",
+        "The exp_1 row in experiments/INDEX.md shows Complete and the supported verdict"
+      ]
+    }
+  ]
+}

@@ -6,46 +6,48 @@ A collection of [Claude Code skills](https://docs.anthropic.com/en/docs/claude-c
 
 ### `ml-experiment-planner`
 
-Generates a structured research-design plan for a machine learning experiment and writes it to disk as `experiments/exp_<n>/DESIGN.md`.
+Plans a machine learning experiment and writes two documents to `experiments/exp_<n>/`.
 
-**Triggers on:** "experiment plan", "design an experiment", "ablation study", "how should I test", "benchmark this", "compare these approaches", etc.
+**Triggers on:** "experiment plan", "design an experiment", "ablation study", "how should I test", "benchmark X against Y", "compare these approaches", etc.
 
 **Produces:**
-- A falsifiable hypothesis
-- Experimental conditions and baselines
-- Evaluation metrics and decision rules
-- Reproducibility checklist (seeds, configs, git-commit tracking)
-- An entry in `experiments/INDEX.md` (the experiment registry)
+- `DESIGN.md` — the research design: a falsifiable hypothesis, conditions (each with an id), metrics, and a decision rule fixed before any data exists
+- `IMPLEMENTATION.md` — the build plan: a run matrix mapping each condition id to its config and command, the code changes needed, what every run must record, and a deviations log to fill in during execution
+- A row in `experiments/INDEX.md` (the experiment registry)
 
-**Does not produce:** implementation plans, function signatures, or file-by-file edit lists. Implementation planning is a separate follow-up step, run in Claude Code plan mode.
+Both are sized to the stakes: a **Lean** tier for an afternoon sanity check, **Standard** for anything you will act on, **Full** for paper-grade work.
+
+**Does not:** write scripts or configs, or launch runs. You review both documents first; building the experiment follows your approval.
 
 ---
 
 ### `ml-experiment-reporter`
 
-Reads the experiment plan and result files, then writes a coherent `experiments/exp_<n>/reports/summary.md` that documents what was done, what was found, and what it means — grounded strictly in evidence.
+Reconciles what was designed, what was built, and what the runs produced, then writes `experiments/exp_<n>/reports/summary.md` — grounded strictly in evidence.
 
-**Triggers on:** "write a report", "summarise my results", "document what happened", "I finished running my experiment", "generate a summary of exp_N", etc.
+**Triggers on:** "write a report", "summarise my results", "write up exp_3", "my runs finished", "what did my experiment show", etc.
 
 **Produces:**
-- A structured report cross-referencing `DESIGN.md`, `IMPLEMENTATION.md`, and `results/`
-- Explicit callouts for missing data, build deviations, and reproducibility gaps
-- Updated `Status` and `Verdict` in `DESIGN.md` and `INDEX.md`
+- A report cross-referencing `DESIGN.md`, `IMPLEMENTATION.md`, and `results/`, sized to the design's tier
+- `reports/inventory.json` — a machine-readable inventory of `results/` (per-seed values, means, paired comparisons, recorded commits) produced by a bundled script, so every number in the report has a source
+- Separate callouts for coverage gaps (planned but not run), build deviations (run, but not as designed), and provenance gaps (missing, dirty, or mismatched commits)
+- The final `Status` and `Verdict`, written to `DESIGN.md` and `INDEX.md`
 
-**Does not:** infer missing metrics from logs, silently skip planned conditions, or invent figures.
+**Does not:** infer missing metrics from logs, silently skip planned conditions, compute statistics without per-seed values, or describe figures that don't exist.
 
 ---
 
 ## Workflow
 
-The two skills form a four-phase pipeline. Each phase leaves a file on disk; the chain only works if each artifact is present.
+Each phase leaves files on disk; the next phase finds them by path.
 
 ```
-planning                 implementation           execution        reporting
-ml-experiment-planner    (Claude plan mode)       (you run it)     ml-experiment-reporter
-writes DESIGN.md        →  saves                 →  produces      →  writes reports/summary.md
-+ INDEX.md row           IMPLEMENTATION.md        results/         + updates DESIGN.md Status
-                                                                   + updates INDEX.md row
+planning                      execution                  reporting
+ml-experiment-planner         (you, or Claude, build     ml-experiment-reporter
+writes DESIGN.md           →   and run it)            →  writes reports/summary.md
+     + IMPLEMENTATION.md       produces results/           + reports/inventory.json
+     + INDEX.md row            logs deviations in          + sets Status and Verdict in
+                               IMPLEMENTATION.md             DESIGN.md and INDEX.md
 ```
 
 ### Expected project layout
@@ -54,25 +56,28 @@ Both skills assume the following directory structure inside your ML project:
 
 ```
 <YourProject>/
-├── docs/
-├── src/
-├── data/
+├── docs/  src/  data/
 └── experiments/
-    ├── INDEX.md                         ← experiment registry (planner creates, reporter updates)
+    ├── INDEX.md                        ← registry, one row per experiment
     └── exp_<n>/
-        ├── DESIGN.md                      ← research-design plan (planner writes)
-        ├── IMPLEMENTATION.md            ← implementation plan (you save after plan-mode approval)
-        ├── scripts/configs/             ← run scripts and config files
+        ├── DESIGN.md                   ← what is tested and how it will be judged
+        ├── IMPLEMENTATION.md           ← how it is built and run; deviations log
+        ├── scripts/                    ← run scripts; configs in scripts/configs/
         ├── results/
-        │   └── <condition>/
-        │       ├── metrics.json
-        │       └── git_commit.txt       ← mandatory: record the git commit before each run
+        │   └── <condition_id>/         ← directory name = a condition id from DESIGN.md
+        │       └── seed_<s>/           ← one directory per run
+        │           ├── metrics.json    ← that run's final metrics
+        │           ├── git_commit.txt  ← code version the run was launched from
+        │           └── checkpoints/
         └── reports/
+            ├── inventory.json
             ├── figures/
-            └── summary.md              ← experiment report (reporter writes)
+            └── summary.md
 ```
 
-The planner will scaffold this structure for you if it doesn't exist yet.
+The planner scaffolds this structure if it doesn't exist yet, and writes a short description of it into `experiments/INDEX.md` so the project documents itself.
+
+**Status** records how far execution got (Draft → In Progress → Complete / Partial / Failed). **Verdict** records what the results say about the hypothesis (✅ supported, ❌ refuted, ⚠️ inconclusive). They are independent: a hypothesis cleanly refuted by a full set of runs is Complete + ❌.
 
 ---
 
@@ -81,7 +86,7 @@ The planner will scaffold this structure for you if it doesn't exist yet.
 Clone this repository, then copy the skill folders to a Claude Code skills directory.
 
 ```bash
-git clone https://github.com/<your-org>/ml-experiment-skills.git
+git clone https://github.com/fagonzalezo/ml-experiment-skills.git
 ```
 
 ### Option A — User-level (available in all your projects)
@@ -102,7 +107,7 @@ cp -r /path/to/ml-experiment-skills/skills/ml-experiment-planner .claude/skills/
 cp -r /path/to/ml-experiment-skills/skills/ml-experiment-reporter .claude/skills/
 ```
 
-After copying, restart Claude Code (or start a new session) so it picks up the new skills.
+After copying, restart Claude Code (or start a new session) so it picks up the new skills. The reporter's inventory script needs Python 3.8+ and nothing beyond the standard library.
 
 ### Verify installation
 
@@ -112,7 +117,7 @@ Open Claude Code in your project and type:
 /ml-experiment-planner
 ```
 
-If the skill loads, you'll see it start asking about your experiment hypothesis.
+If the skill loads, it will start by asking about your experiment.
 
 ---
 
@@ -124,19 +129,19 @@ If the skill loads, you'll see it start asking about your experiment hypothesis.
 I want to test whether focal loss improves F1 on my imbalanced dataset.
 ```
 
-The planner picks up the intent, asks clarifying questions if needed, chooses an appropriate plan tier (lean sanity check vs. full paper-grade), and writes `experiments/exp_<n>/DESIGN.md`.
+The planner asks one batch of clarifying questions if it needs them, picks a tier, looks at your existing code, and writes `experiments/exp_<n>/DESIGN.md` and `IMPLEMENTATION.md`. Review both before any code is written.
 
-### Create an implementation plan
+### Build and run it
 
-After accepting the experiment plan, enter Claude Code plan mode and ask for an implementation plan covering the scripts and configs. Save the approved plan as `experiments/exp_<n>/IMPLEMENTATION.md` before touching any files.
-
-### Run your experiment
-
-Follow the implementation plan. Before each run, record the git commit:
+Follow `IMPLEMENTATION.md` — yourself, or by asking Claude to implement it. Each run writes its own directory, and the run script records the commit at launch:
 
 ```bash
-git log -1 --format="%H %s" > experiments/exp_<n>/results/<condition>/git_commit.txt
+RUN_DIR=experiments/exp_<n>/results/<condition_id>/seed_<s>
+git log -1 --format="%H %s" > "$RUN_DIR/git_commit.txt"
+git diff --quiet HEAD || echo "DIRTY: uncommitted changes at launch" >> "$RUN_DIR/git_commit.txt"
 ```
+
+When something departs from the plan — a changed hyperparameter, a dropped seed — add a row to the Deviations Log in `IMPLEMENTATION.md`.
 
 ### Report results
 
@@ -144,20 +149,35 @@ git log -1 --format="%H %s" > experiments/exp_<n>/results/<condition>/git_commit
 Write a report for exp_3.
 ```
 
-The reporter reads `DESIGN.md`, `IMPLEMENTATION.md`, `results/`, and any figures in `reports/figures/`, then writes `reports/summary.md` and updates the status fields in `DESIGN.md` and `INDEX.md`.
+The reporter reads `DESIGN.md` and `IMPLEMENTATION.md`, inventories `results/`, and writes `reports/summary.md`. It works on partial and failed experiments too; what is missing is listed rather than filled in.
 
 ---
 
-## Skill file structure
-
-Each skill is a single `SKILL.md` file with YAML frontmatter and markdown instructions:
+## Repository structure
 
 ```
 skills/
 ├── ml-experiment-planner/
 │   └── SKILL.md
 └── ml-experiment-reporter/
-    └── SKILL.md
+    ├── SKILL.md
+    └── scripts/collect_results.py     ← results inventory and statistics (stdlib only)
+evals/
+├── evals.json                         ← test prompts and what each should produce
+└── fixtures/                          ← small fake projects the prompts run against
+tools/
+└── check_contract.py                  ← checks the two skills agree on the layout
 ```
 
-The `description:` frontmatter field is what Claude Code matches against your messages to decide whether to invoke the skill. To contribute or modify a skill, edit the prose in `SKILL.md` — there is no build step.
+The `description:` frontmatter field of each `SKILL.md` is what Claude Code matches against your messages to decide whether to invoke the skill.
+
+### Contributing
+
+The two skills share a layout contract, and each `SKILL.md` carries its own copy between `<!-- contract:start -->` and `<!-- contract:end -->` (they are installed separately, so neither can point at a shared file). After editing either one:
+
+```bash
+python tools/check_contract.py          # fails if the two copies differ
+python tools/check_contract.py --sync   # copy the planner's block into the reporter
+```
+
+`evals/evals.json` lists realistic prompts with checkable expectations. Run each against a fresh copy of its fixture project to see whether a change to a skill helped or hurt.

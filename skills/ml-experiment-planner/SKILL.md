@@ -1,194 +1,206 @@
 ---
 name: ml-experiment-planner
 description: >
-  Generates structured, rigorous experiment plans for machine learning research. Use this skill
-  whenever a user wants to design, plan, or structure an ML experiment — including baseline
-  comparisons, ablation studies, hyperparameter sweeps, architecture searches, data
-  experiments, fine-tuning runs, or evaluation protocols. Trigger on phrases like "experiment
-  plan", "research plan", "how should I test", "design an experiment", "ablation study",
-  "benchmark this", "evaluate my model", "compare these approaches", or any request to
-  systematically validate an ML idea or hypothesis. Also use for questions like "how do I
-  know if X works better than Y" in an ML context. Produces a research-design plan (hypothesis,
-  conditions, metrics, decision rules) — NOT a code-implementation plan. Implementation planning
-  is a separate follow-up step, ideally run in plan mode after the experiment plan is accepted.
-  Do NOT use for pure theory questions, math derivations, non-ML software engineering tasks,
-  or for planning the code/scripts that implement an experiment (that is a separate
-  implementation-planning step, ideally run in plan mode).
+  Plans a machine learning experiment and writes two files: DESIGN.md (the research design —
+  falsifiable hypothesis, conditions, metrics, decision rule) and IMPLEMENTATION.md (the build
+  plan — run matrix, configs, code changes, what every run must record). Use this skill whenever
+  a user wants to design, plan, or structure an ML experiment before running it: baseline
+  comparisons, ablations, hyperparameter sweeps, architecture or data experiments, fine-tuning
+  runs. Trigger on "experiment plan", "research plan", "design an
+  experiment", "ablation study", "how should I test", "benchmark X against Y", "compare these
+  approaches", "how do I know if X works better than Y", or any request to systematically
+  validate an ML idea, even if the user never says "plan". It plans; it does not write scripts
+  or launch runs. Do NOT use for writing up existing results (use ml-experiment-reporter), for
+  running or debugging an existing evaluation, for pure theory or math questions, or for non-ML
+  software engineering.
 ---
 
 # ML Experiment Planner
 
-Generates clear, actionable experiment plans for ML research — from quick ablations to
-full research campaigns.
+Turns a research question into two documents on disk, sized to the stakes — from an afternoon
+sanity check to a paper-grade campaign.
 
----
+## What This Skill Writes
 
-## What This Skill Produces (and What It Does Not)
+| File | Answers | Contains |
+|------|---------|----------|
+| `experiments/<exp_id>/DESIGN.md` | What are we testing, and how will we know? | Hypothesis, conditions, metrics, decision rule, risks |
+| `experiments/<exp_id>/IMPLEMENTATION.md` | What do we build and run to test it? | Run matrix, configs, code changes, what each run records, deviations log |
+| `experiments/INDEX.md` | Where does this sit in the campaign? | One registry row per experiment |
 
-**This skill produces an experiment plan** — a research-design document that captures:
-- A falsifiable hypothesis
-- Experimental conditions and baselines
-- Evaluation metrics and decision rules
-- Risks and reproducibility requirements
+The two plans are separate files because they change for different reasons and the reporter
+compares them: `DESIGN.md` is what was *intended*, `IMPLEMENTATION.md` is what was *built*, and
+`results/` is what *happened*. So keep code-level detail (file names, configs, commands) out of
+`DESIGN.md` — a design that names scripts goes stale the first time the build changes, and the
+research claim gets buried under plumbing.
 
-**It is NOT an implementation plan.** The experiment plan must not contain function-level code design, refactor steps, file-by-file edit lists, or task breakdowns for writing code.
+The skill stops at the documents. It does not write scripts or configs and does not launch runs:
+the user reviews both files first, and building the experiment is ordinary coding work that
+follows their approval.
 
-**After the experiment plan is accepted by the user**, the natural next step is a separate **implementation plan** — covering which scripts to add or modify under `experiments/<exp_id>/scripts/`, what reusable code to add to `../../src/`, configs, and any data-pipeline changes. That implementation plan should be built in **Claude Code's plan mode** (or an equivalent review-before-edit flow) so the user can review and approve before any files are touched. Do not start editing implementation files from within this skill.
+<!-- contract:start (this block is byte-identical in ml-experiment-planner and ml-experiment-reporter) -->
+## Shared Layout Contract
 
-This skill does not *write* the implementation plan, but it owns the convention for where it lives: once approved, the implementation plan is saved as `experiments/<exp_id>/IMPLEMENTATION.md`, right next to `DESIGN.md`. Keeping the two together matters downstream — the reporter reads `IMPLEMENTATION.md` to map each condition to the config/script that produced it and to detect where the build diverged from the design. An implementation plan that lives only in a chat transcript is lost by report time.
-
----
-
-## Project Structure
-
-Experiments live inside a standardized project layout:
+The planner and the reporter never talk to each other; they find each other's work by path. Both
+therefore assume this layout inside the user's project:
 
 ```
 <Project>/
-├── docs/          ← shared: documentation, references
-├── src/           ← shared: model code, utilities, data loaders
-├── data/          ← shared: raw and processed datasets
+├── docs/  src/  data/                  ← shared across experiments
 └── experiments/
-    ├── INDEX.md        ← registry of all experiments (id, title, status, verdict)
-    ├── exp_1/
-    │   ├── DESIGN.md            ← experiment (research-design) plan — written by THIS skill
-    │   ├── IMPLEMENTATION.md  ← implementation plan, saved after plan-mode approval
-    │   ├── scripts/           ← run scripts, configs, sweep definitions
-    │   ├── results/           ← model outputs, metrics, checkpoints
-    │   └── reports/           ← figures, summaries, final write-ups
-    ├── exp_2/
-    │   └── ...
-    └── exp_n/
-        └── ...
+    ├── INDEX.md                        ← registry, one row per experiment (planner adds, reporter updates)
+    └── exp_<n>/
+        ├── DESIGN.md                   ← planner: what is tested and how it will be judged
+        ├── IMPLEMENTATION.md           ← planner: how it is built and run; deviations are logged here
+        ├── scripts/                    ← run scripts; configs in scripts/configs/
+        ├── results/
+        │   └── <condition_id>/         ← directory name = a condition id from DESIGN.md
+        │       └── seed_<s>/           ← one directory per run
+        │           ├── metrics.json    ← that run's final metrics
+        │           ├── git_commit.txt  ← code version the run was launched from
+        │           └── checkpoints/
+        └── reports/
+            ├── inventory.json          ← reporter: machine-readable inventory of results/
+            ├── figures/
+            └── summary.md              ← reporter: the report
 ```
 
-These four phases each own an artifact, and the chain only works if each one is on disk:
-`DESIGN.md` (planning) → `IMPLEMENTATION.md` (implementation planning, in plan mode) → `results/` (execution) → `reports/summary.md` (reporting). `experiments/INDEX.md` threads them together at the project level.
-
-**Key conventions:**
-- The design file is always named `DESIGN.md` at the **root of the experiment folder** (e.g., `experiments/exp_3/DESIGN.md`). The implementation plan, once approved, sits beside it as `IMPLEMENTATION.md`.
-- `scripts/` holds run configs and training scripts that reference paths in `../../src/` and `../../data/`.
-- `results/` holds raw outputs (metrics JSON, checkpoints). `reports/` holds polished summaries and figures.
-- `experiments/INDEX.md` is the project's experiment registry **and** its self-documenting record of this layout — important because this skill is distributed standalone and the user's project won't carry external conventions docs. Create/update it at scaffold time (Step 0).
-- If the project root or experiment folder doesn't exist yet, scaffold it (see Step 0 below).
+- **Condition ids.** Every condition in `DESIGN.md` has a short id (`lowercase_with_underscores`)
+  and its runs live in `results/<that id>/`. Matching by id is what lets the reporter tell "not
+  run" from "named differently".
+- **One directory per run.** `seed_<s>/metrics.json` is a flat JSON object holding that run's
+  final metrics, including `seed` and the primary metric under the exact key `DESIGN.md` names.
+  Per-seed files are what make a spread or a significance test computable; a pre-averaged number
+  is not enough.
+- **`git_commit.txt`, one per run.** Line 1 is `<full sha> <subject>`. A second line starting
+  with `DIRTY` records that tracked files had uncommitted changes at launch:
+  ```bash
+  git log -1 --format="%H %s" > "$RUN_DIR/git_commit.txt"
+  git diff --quiet HEAD || echo "DIRTY: uncommitted changes at launch" >> "$RUN_DIR/git_commit.txt"
+  ```
+- **Status** says how far *execution* got: `Draft` (planner) → `In Progress` (set when the first
+  run launches — a step in `IMPLEMENTATION.md`) → `Complete` / `Partial` / `Failed` (reporter).
+  Complete: every planned run produced the primary metric. Partial: some planned runs are
+  missing, but at least one planned comparison can be made. Failed: no planned comparison can be
+  made.
+- **Verdict** says what the results mean for the *hypothesis*: ✅ Supported / ❌ Refuted /
+  ⚠️ Inconclusive, decided by the decision rule in `DESIGN.md`. The two are independent — a
+  hypothesis cleanly refuted by a full set of runs is `Complete` + ❌, not `Failed`.
+- **Both fields live in two places**, the `DESIGN.md` header and the experiment's `INDEX.md` row,
+  and must agree.
+- **Older experiments** may have `PLAN.md` instead of `DESIGN.md`, no `IMPLEMENTATION.md`, or
+  metrics directly in `results/<condition_id>/`. Read them as they are; don't rename or migrate
+  them.
+<!-- contract:end -->
 
 ---
 
-## Core Workflow
+## Workflow
 
-### Step 0. Locate, Check, or Scaffold the Experiment Folder
+### 1. Understand the question
 
-Before writing the plan, figure out where it lives **and whether the project matches the layout this skill and the reporter depend on**. This check matters: the planner→reporter handoff only works because both skills look for files in the same places. A plan written into a structure that doesn't exist doesn't fail now — it resurfaces later as a confusing reporting failure when the reporter can't find `results/<condition>/`. Catching the mismatch here, with a question, is far cheaper.
+Pull what you can from the conversation before asking anything:
 
-Look at the project root for the expected markers — chiefly an `experiments/` directory (and, loosely, `src/` and `data/`). Three cases:
+- **Hypothesis** — the specific claim being tested
+- **Task and data** — ML task, dataset(s), modality
+- **Intervention** — the new idea, and what it is being compared against
+- **Prior numbers** — existing baselines or published results to match
+- **Constraints and stakes** — compute budget, deadline, exploratory check vs. paper claim
+- **Where it runs** — local, shared cluster, job scheduler; experiment tracker; where large
+  artifacts go; how the environment is pinned
 
-1. **Layout matches** (an `experiments/` dir is present and conforms): proceed silently — no need to narrate it. List `experiments/`, suggest the next available name (e.g. `exp_4` if `exp_1`–`exp_3` exist), and confirm the path.
+Then ask **once**, in a single batch of two to four questions, for whatever is still missing
+*and* would change the design or the build. A vague prompt like "I want to test my new loss
+function" needs that round; a detailed one may need none. Anything with a sensible default is
+not worth a question — pick the default and record it under "Assumptions & Open Questions" in
+`IMPLEMENTATION.md`, where the user will see it at review. Planning an afternoon's experiment
+should not take three rounds of interview.
 
-2. **No project yet / empty directory**: ask for the project root and name, then scaffold the full structure (commands below).
+### 2. Locate the experiment folder
 
-3. **Project exists but doesn't match** (no `experiments/` dir, a flat repo, or results/code in differently-named folders like `outputs/` or `models/`): **don't silently write into it.** Warn the user and offer a choice, e.g.:
-   > ⚠️ This project doesn't follow the experiment layout I expect (`experiments/exp_N/` with `DESIGN.md`, `results/<condition>/`, `reports/`). I can **create that structure alongside your existing files**, or **write the plan where you point me** and you manage the paths yourself. Which would you prefer?
-   - **Scaffold** → create the standard tree *additively* (commands below). Only create new directories — never move, rename, or reorganize the user's existing files. If they actually want existing code relocated into the layout, that's a separate, explicitly-confirmed action, not something this skill does on its own (it's easy to break imports and hard to undo).
-   - **Proceed as-is** → write `DESIGN.md` at the path they give and add a ⚠️ note in the plan that the layout is non-standard, so reporting may need paths pointed out explicitly.
+Check the project root for an `experiments/` directory (and, loosely, `src/` and `data/`). The
+reporter will later look for results at exact paths, so a plan written into a layout that isn't
+there doesn't fail now — it resurfaces as a confusing reporting failure. Three cases:
 
-4. **Always confirm** the experiment folder path with the user before creating files.
+1. **Layout matches.** Take the next free id (`exp_4` if `exp_1`–`exp_3` exist), say which path
+   you are using, and carry on. No confirmation round is needed.
+2. **No project yet.** Ask for the project root and name (fold this into the question batch
+   above), then scaffold.
+3. **Project exists but doesn't match** — no `experiments/`, a flat repo, results in `outputs/`
+   or `runs/`. Don't silently write into it. Say what you found and offer the choice:
+   > ⚠️ This project doesn't follow the layout I expect (`experiments/exp_N/` with `DESIGN.md`,
+   > `results/<condition_id>/seed_<s>/`, `reports/`). I can **create that structure alongside
+   > your existing files**, or **write the plan where you point me** and you manage the paths
+   > yourself. Which do you prefer?
+   - *Create alongside* → add new directories only. Never move, rename, or reorganise existing
+     files: relocating code breaks imports and is hard to undo, so it needs its own explicit
+     request.
+   - *Write where pointed* → write both plans at the path given and put a ⚠️ note at the top of
+     each saying the layout is non-standard, so the reporter will need paths pointed out.
 
-**Scaffold a new project:**
 ```bash
-PROJECT=<project_name>
-EXP=exp_1
-mkdir -p $PROJECT/{docs,src,data,experiments/$EXP/{scripts,results,reports}}
+# New project
+mkdir -p <project>/{docs,src,data,experiments/exp_1/{scripts/configs,results,reports/figures}}
+# New experiment in an existing project
+mkdir -p <project>/experiments/exp_<n>/{scripts/configs,results,reports/figures}
 ```
 
-**Add a new experiment to an existing project:**
-```bash
-PROJECT=<project_root>
-EXP=exp_<n>   # next available number
-mkdir -p $PROJECT/experiments/$EXP/{scripts,results,reports}
-```
+### 3. Pick the tier
 
-**Write the plan file** with the **Write tool**, not a bash heredoc. The plan is a long Markdown document containing its own code fences and tables; writing it through `cat << EOF` invites quoting and escaping breakage. Use `mkdir -p` (bash) to create folders, then `Write` to create `experiments/<exp_id>/DESIGN.md`.
+Decide how much plan the work warrants before writing any of it. A plan exists to make the
+experiment runnable and its result interpretable; wrapping a yes/no sanity check in a risk
+register and a compute table buries the one thing that matters.
 
-**Create or update `experiments/INDEX.md`** (with the Write tool). If it doesn't exist, create it with a short header documenting the layout (so the project is self-describing — this skill ships without any external conventions file), then a registry table. If it exists, append a row for the new experiment. One row per experiment:
+| Tier | When | Shape |
+|------|------|-------|
+| **Lean** | Sanity check, "does X help at all", a single afternoon | Lean templates, a few sentences per section |
+| **Standard** | Ablation, method comparison, anything you will act on | Full templates; drop sections that don't apply |
+| **Full** | Paper submission, large sweep, expensive benchmark | Full templates, every section |
 
-```markdown
-# Experiments Index — <project_name>
+Between two tiers, pick the smaller — adding a section later is cheaper than making a reader
+wade through padding. Write the tier into the `DESIGN.md` header; the reporter reads it to size
+the report to match.
 
-Layout: each `exp_<n>/` holds `DESIGN.md` (research design) → `IMPLEMENTATION.md` (build plan)
-→ `results/<condition>/` (runs) → `reports/summary.md` (write-up). See any `DESIGN.md` for detail.
+### 4. Look at the code before planning the build
 
-| Exp | Title | Status | Hypothesis (1 line) | Verdict | Date |
-|-----|-------|--------|---------------------|---------|------|
-| [exp_1](exp_1/DESIGN.md) | Focal vs. CE on CheXpert | Draft | Focal loss improves macro-F1 ≥0.02 | — | 2026-05-23 |
-```
+Read enough of `src/` and of earlier experiments' `scripts/` to know what already exists: the
+training entry point, the config format, how metrics get written. `IMPLEMENTATION.md` should
+name real files and reuse them — a plan that proposes a new `train.py` beside a working one, or
+flags the existing CLI doesn't have, costs the user a rewrite. If there is no code yet, say so
+and mark everything as new. Keep this proportional: a glance for Lean, a proper read for Full.
 
-The reporter updates the `Status` and `Verdict` of a row when it writes the report, so this stays the live campaign view.
+### 5. Write `DESIGN.md`
 
-**Backward compatibility.** An existing `INDEX.md` from an older project may link its rows to `PLAN.md` (e.g. `[exp_2](exp_2/PLAN.md)`) and carry a layout header that names `PLAN.md`. When you append a row, only add the new experiment's row — link it to `DESIGN.md`, since that's the file this skill now writes — and **leave the existing rows and their `PLAN.md` links untouched** (those files really are named `PLAN.md` on disk; rewriting the links would break them). Don't rewrite the header or migrate old rows. The result is a mixed index where legacy experiments point at `PLAN.md` and new ones point at `DESIGN.md`; the reporter handles both names.
+Use the Write tool (the documents contain tables and code fences that a shell heredoc mangles).
+Write a single value in `Status` — `Draft` — because the reporter later replaces that one word.
 
----
-
-### Step 1. Capture the Research Question
-
-Before writing any plan, extract (from the conversation or by asking):
-
-- **Hypothesis**: What specific claim is being tested? (e.g., "attention beats convolutions on this task")
-- **Task & domain**: What ML task, dataset(s), modality?
-- **Proposed method**: What is the new idea / intervention being evaluated?
-- **Constraints**: Compute budget, time, available hardware, team size
-- **Prior work**: What baselines already exist? Any published numbers to match?
-- **Stakes**: Is this exploratory (sanity check) or high-stakes (paper submission)?
-
-If the user gives a vague prompt like "I want to test my new loss function", ask 2–3 focused questions before writing the plan.
-
----
-
-### Step 2. Pick the Tier First, Then the Structure
-
-Before writing anything, decide how much plan the work actually warrants. A plan is a tool for the
-researcher — its job is to make the experiment runnable and its result interpretable. A quick
-sanity check answers a yes/no question in an afternoon; wrapping it in a file-layout diagram, a
-baselines table, and a ten-item reproducibility checklist buries the one thing that matters and
-signals a level of ceremony the work doesn't have. Match the plan to the stakes:
-
-| Tier | When | Template to use |
-|------|------|-----------------|
-| **Lean** | Quick sanity check, "does X help at all", a single afternoon run | **Lean template** below (~4 short sections) |
-| **Standard** | Ablation study, optimizer/method comparison, anything you'll act on | Full template, but drop sections that don't apply (e.g. no Ablations if there are none) |
-| **Full** | Paper submission, large sweep, expensive benchmark | Full template, all sections, statistical testing |
-
-When in doubt between two tiers, pick the smaller one — it's cheaper to add a section than to make
-a reader wade through padding. The plan is written to `experiments/<exp_id>/DESIGN.md` — include the
-experiment ID and project name in the header.
-
-#### Lean template (sanity checks)
-
-For a Lean-tier plan, **use exactly this skeleton — do not expand it into the full template.** No
-file-layout diagram, no baselines table, no reproducibility checklist. A few sentences per section
-is the right length.
+**Lean:**
 
 ```markdown
 # Experiment Design: [Descriptive Title]
-**Experiment**: experiments/<exp_id>/ · **Project**: <project_name> · **Date**: YYYY-MM-DD · **Status**: Draft
+**Experiment**: experiments/<exp_id>/ · **Project**: <project_name> · **Date**: YYYY-MM-DD · **Tier**: Lean · **Status**: Draft
 
 ## Hypothesis
-One falsifiable sentence. e.g. "Adding random-crop augmentation improves MNIST test accuracy."
+One falsifiable sentence, e.g. "Random-crop augmentation improves MNIST test accuracy."
 
 ## Setup
-Dataset, model, the one thing that varies (baseline vs. the change), seeds. 3–5 bullets.
+Dataset, model, and the one thing that varies. 3–5 bullets.
+
+## Conditions
+| id | Role | What it is |
+|----|------|------------|
+| baseline | baseline | ... |
+| random_crop | proposed | baseline + random-crop augmentation |
+
+Seeds: <list>, the same for every condition.
 
 ## Metric & Decision
-Primary metric, and the threshold/comparison that decides yes/no. Record the git commit per run
-(`git log -1 --format="%H %s" > results/<condition>/git_commit.txt`) so the result is traceable.
-
-## Next Step
-One line: accept this, then move to an implementation plan in plan mode.
+Primary metric: <name> (`<key in metrics.json>`). Supported if <threshold>; refuted if <...>;
+anything else is inconclusive.
 ```
 
-#### Full template (standard / paper-grade)
-
-This is the **maximal form**. For Standard-tier work, include the sections that apply and drop the
-rest; for Full-tier, use all of them.
+**Standard / Full** (the maximal form — for Standard, drop what doesn't apply, but keep the
+section names, since the reporter looks sections up by name):
 
 ```markdown
 # Experiment Design: [Descriptive Title]
@@ -196,227 +208,232 @@ rest; for Full-tier, use all of them.
 **Project**: <project_name>  
 **Date**: YYYY-MM-DD  
 **Author**: <name or TBD>  
-**Status**: Draft / In Progress / Complete
+**Tier**: Standard  
+**Status**: Draft
 
----
+## Hypothesis
+A single falsifiable sentence, e.g. "Replacing cross-entropy with focal loss improves macro-F1
+on the imbalanced split by ≥0.02."
 
-## 1. Hypothesis
-A single falsifiable sentence. Example:
-"Replacing cross-entropy with focal loss improves F1 on class-imbalanced splits by ≥2 points."
+## Setup
+- **Dataset(s)**: name, version or hash, split strategy, preprocessing
+- **Model**: architecture and size
+- **Training**: optimizer, schedule, batch size, budget in epochs or steps
+- **Tuning budget**: how much hyperparameter search each condition gets — equal across
+  conditions, or the reason it isn't
 
-## 2. Experimental Setup
-- **Dataset(s)**: name, version/hash, location (`../../data/<dataset>/`), split strategy, preprocessing
-- **Model**: architecture, config file location (`scripts/<config>.yaml`)
-- **Training**: optimizer, LR schedule, batch size, epochs/steps, seeds
-- **Hardware**: GPU/TPU type, memory, estimated runtime per run
+## Conditions
+| id | Role | What differs from the baseline | What it isolates | Expected <primary metric> |
+|----|------|-------------------------------|------------------|---------------------------|
+| baseline_ce | baseline | — | reference point | 0.80–0.82 (prior run) |
+| focal_g2 | proposed | focal loss, γ=2 | the hypothesis | ≥ baseline + 0.02 |
+| focal_g2_no_reweight | ablation | focal loss without class reweighting | whether the gain is the loss or the reweighting | — |
 
-## 3. File Layout for This Experiment
-```
-experiments/<exp_id>/
-├── DESIGN.md                  ← this file (experiment design only)
-├── scripts/                 ← run scripts and configs (decided in the implementation plan)
-├── results/
-│   ├── <condition>/         ← metrics.json, checkpoints/
-│   └── ...
-└── reports/
-    ├── figures/
-    └── summary.md
-```
-Scripts and configs reference project-root-relative paths (e.g., `../../src/`, `../../data/`). Specific script names, configs, and code structure are decided in the **implementation plan**, not here.
+Role is one of baseline / proposed / ablation. For a sweep, give the search strategy (grid,
+random, Bayesian), the ranges, and the id pattern (e.g. `lr_<value>`).
 
-## 4. Baselines
-| Baseline | Config file | Expected metric range |
-|----------|------------|----------------------|
-| ...      | `scripts/configs/baseline.yaml` | ... |
+## Evaluation Protocol
+- **Primary metric**: name, exact key in `metrics.json`, and the split it is computed on
+- **Secondary metrics**: names and keys
+- **Seeds**: how many and which, the same for every condition so comparisons can be paired
+- **Checkpoint selection**: which checkpoint's number is reported (e.g. best validation
+  checkpoint, evaluated on test once)
+- **Statistical analysis**: the one primary comparison, and what will be computed for it
 
-## 5. Proposed Conditions
-What varies across runs? Define each condition precisely, with its config file.
+## Decision Rules
+- **Supported if** …
+- **Refuted if** …
+- **Inconclusive if** … (the zone between the two, or fewer seeds than planned)
+- **Then what**: the next step under each outcome
+- **Stopping criteria** for expensive sweeps
 
-## 6. Ablation Studies
-If applicable: list each ablation and what it isolates. Each ablation gets its own config.
+## Compute Budget
+conditions × seeds = runs; × hours per run = GPU-hours, set against the available budget.
 
-## 7. Evaluation Protocol
-- Primary metric(s) with thresholds for "success"
-- Secondary metrics
-- Statistical testing: number of seeds, confidence intervals, significance test if needed
-- Results written to: `results/<condition>/metrics.json`
-- Compute budget per run × number of runs = total cost estimate
+## Risks & Mitigations
+Two to four specific risks, each with its mitigation.
 
-## 8. Expected Results & Decision Rules
-- If hypothesis holds → next steps
-- If hypothesis fails → alternative explanations, follow-up runs
-- Stopping criteria for expensive sweeps
-
-## 9. Risks & Mitigations
-List 2–4 specific risks (data leakage, unfair baselines, metric mismatch, etc.) with mitigations.
-
-## 10. Reproducibility Checklist
-- [ ] Random seeds fixed and logged
-- [ ] Config YAML saved in `scripts/configs/`
-- [ ] Dataset version / hash recorded in this file
-- [ ] Model checkpoints saved to `results/<condition>/checkpoints/`
-- [ ] Experiment tracker run linked (WandB / MLflow)
-- [ ] Environment frozen (`../../docs/environment.yml` or `requirements.txt`)
-- [ ] **Git commit hash recorded** — run `git log -1 --format="%H %s" > results/<condition>/git_commit.txt` before launching any run
-- [ ] Working tree was clean at run time (no uncommitted changes) — verify with `git status`; commit or stash any changes first
-
-## 11. Next Steps
-1. Review and accept this experiment plan (hypothesis, conditions, metrics, decision rules).
-2. Once accepted, produce an **implementation plan** (in Claude Code plan mode) covering the scripts, configs, and code changes needed to run the conditions in Sections 5–6. Do not begin editing any implementation files until that plan is approved.
+## Reproducibility Requirements
+What must hold for every run (the commands that achieve it are in IMPLEMENTATION.md):
+- Seeds fixed and written to `metrics.json`
+- Dataset version or hash recorded in Setup above
+- Code version recorded per run in `git_commit.txt`, launched from a committed tree
+- Environment pinned
+- One saved config per condition
 ```
 
----
+### 6. Write `IMPLEMENTATION.md`
 
-### Step 3. Tier-Specific Emphasis
+This is the file that travels with the experiment into execution, so it has to be usable by
+someone (or some later session) that has not seen this conversation. Its run matrix must carry
+exactly the condition ids from `DESIGN.md` — no extras, none dropped.
 
-Within the tiers from Step 2, lean on the sections that carry the most weight for the work at hand:
+**Lean:**
 
-- **Ablation study** (Standard): emphasize Baselines and Proposed Conditions — each ablation needs its own condition isolating one component.
-- **Hyperparameter sweep** (Standard/Full): add the sweep strategy (grid / random / Bayesian) and the budget to the Evaluation Protocol.
-- **Large-scale benchmark** (Full): include the compute-cost table and dataset provenance.
-- **Paper experiment** (Full): statistical testing and the full reproducibility checklist are non-negotiable.
+````markdown
+# Implementation Plan: [Same Title as DESIGN.md]
+**Experiment**: experiments/<exp_id>/ · **Design**: [DESIGN.md](DESIGN.md) · **Date**: YYYY-MM-DD
 
----
+## Run Matrix
+| Condition id | Command | Seeds | Writes to |
+|--------------|---------|-------|-----------|
+| baseline | `python scripts/train.py --seed $SEED` | 0 | `results/baseline/seed_$SEED/` |
+| random_crop | `python scripts/train.py --augment random_crop --seed $SEED` | 0 | `results/random_crop/seed_$SEED/` |
 
-### Step 4. Evaluation Metrics — Quick Reference
+Code to add or change: one or two lines, naming the files.
 
-Pick metrics appropriate to the task:
-
-| Task | Primary metrics | Notes |
-|------|----------------|-------|
-| Classification | Accuracy, F1, AUROC | Use macro-F1 for class imbalance |
-| Detection | mAP@50, mAP@50:95 | COCO-style |
-| Segmentation | mIoU, Dice | |
-| Generation (text) | Perplexity, BLEU, ROUGE, BERTScore | Human eval for final |
-| Generation (image) | FID, IS, LPIPS | |
-| Regression | MAE, RMSE, R² | |
-| Ranking / Retrieval | MRR, NDCG, Recall@K | |
-| RL | Episode return, sample efficiency | Report over N seeds |
-| Efficiency | FLOPs, latency (ms), memory (GB), throughput | Always pair with quality |
-
----
-
-### Step 5. Statistical Rigor Guidelines
-
-- **Minimum seeds**: 3 for cheap experiments, 5+ for paper-quality claims
-- **Report**: mean ± std (or 95% CI) across seeds, not just best run
-- **Significance**: for small effect sizes, use paired t-test or Wilcoxon signed-rank
-- **Avoid**: cherry-picking checkpoints, reporting val instead of test, tuning on test set
-
----
-
-### Step 6. Compute Budget Estimation Helper
-
-Prompt the user (or estimate) using:
-
-```
-total_cost = num_conditions × num_seeds × hours_per_run × GPU_cost_per_hour
-```
-
-Flag if total_cost > reasonable threshold and suggest:
-- Reducing seeds for exploratory phase
-- Using smaller proxy tasks first
-- Early stopping / learning curve analysis
-
----
-
-### Step 7. Git & Code Version Tracking
-
-Every run must record the exact state of the codebase. Include the following instructions in the plan and in any generated run scripts.
-
-**Before launching a run — mandatory checks:**
+## What Every Run Records
+In `results/<condition_id>/seed_<s>/`: `metrics.json` with `seed` and `<primary key>`, and
+`git_commit.txt`, written by the run script at launch:
 ```bash
-# 1. Ensure the working tree is clean (no uncommitted changes)
-git status
-# If dirty: commit your changes, or stash them: git stash
+git log -1 --format="%H %s" > "$RUN_DIR/git_commit.txt"
+git diff --quiet HEAD || echo "DIRTY: uncommitted changes at launch" >> "$RUN_DIR/git_commit.txt"
+```
+When the first run launches, set **Status** to `In Progress` in DESIGN.md and its INDEX.md row.
 
-# 2. Record the commit hash into the results folder for this run
-git log -1 --format="%H %s" > results/<condition>/git_commit.txt
+## Deviations Log
+Append a row whenever what is built or run departs from this plan or from DESIGN.md.
 
-# 3. Optionally tag the run for easy retrieval later
-git tag exp_<n>_<condition>_run<seed>
+| Date | What changed | Why | Conditions affected |
+|------|--------------|-----|---------------------|
+| — | None so far | | |
+````
+
+**Standard / Full:**
+
+````markdown
+# Implementation Plan: [Same Title as DESIGN.md]
+**Experiment**: experiments/<exp_id>/  
+**Design**: [DESIGN.md](DESIGN.md)  
+**Date**: YYYY-MM-DD
+
+## Run Matrix
+One row per condition id in DESIGN.md.
+
+| Condition id | Config | Command | Seeds | Writes to |
+|--------------|--------|---------|-------|-----------|
+| baseline_ce | `scripts/configs/baseline_ce.yaml` | `python scripts/train.py --config scripts/configs/baseline_ce.yaml --seed $SEED` | 0 1 2 | `results/baseline_ce/seed_$SEED/` |
+
+## Code Changes
+Paths are relative to the experiment folder; shared code is `../../src/...`.
+
+| File | New / modify | What and why |
+|------|--------------|--------------|
+| `scripts/train.py` | new | entry point: loads a config, trains, writes the run directory |
+| `../../src/losses.py` | modify | add focal loss next to the existing cross-entropy wrapper |
+
+## What Every Run Records
+Each run writes into `results/<condition_id>/seed_<s>/`:
+- `metrics.json` — flat JSON with `seed`, `<primary key>`, `<secondary keys>`, plus
+  `epochs_completed` and `train_time_hours`, so the report can state what actually ran rather
+  than what was planned
+- `git_commit.txt` — written by the run script at launch, not by hand:
+  ```bash
+  git log -1 --format="%H %s" > "$RUN_DIR/git_commit.txt"
+  git diff --quiet HEAD || echo "DIRTY: uncommitted changes at launch" >> "$RUN_DIR/git_commit.txt"
+  ```
+- `checkpoints/` — add `experiments/*/results/**/checkpoints/` to `.gitignore`; do commit
+  `metrics.json` and `git_commit.txt`
+- Tracker, if one is used: log the commit hash and the condition id as run parameters
+
+## Execution Order
+1. Make the code changes and commit them, so every condition launches from the same commit.
+2. Smoke-test one condition with one seed for a few steps; check the run directory holds the
+   files above with the right keys, then delete it.
+3. Set **Status** to `In Progress` in DESIGN.md and in its INDEX.md row.
+4. Launch the run matrix (order, parallelism, scheduler details).
+5. When the runs finish — or you stop early — ask for the report; the ml-experiment-reporter
+   skill reads this folder.
+
+## Assumptions & Open Questions
+Defaults chosen without asking, and anything the user should confirm before building.
+
+## Deviations Log
+Append a row whenever what is built or run departs from this plan or from DESIGN.md — a changed
+hyperparameter, a dropped seed, a condition cut for budget. The reporter reads this table; a
+change that isn't logged here shows up at report time as an unexplained discrepancy.
+
+| Date | What changed | Why | Conditions affected |
+|------|--------------|-----|---------------------|
+| — | None so far | | |
+````
+
+### 7. Register the experiment in `INDEX.md`
+
+If `experiments/INDEX.md` doesn't exist, create it from the template below. The header is the
+project's own record of this layout — the skills are installed separately from the project, so
+without it nothing on disk explains where things go. If it exists, append one row with the Edit
+tool and leave everything else alone, including older rows that link to `PLAN.md`.
+
+```markdown
+# Experiments Index — <project_name>
+
+Each `exp_<n>/` folder holds:
+- `DESIGN.md` — what is tested and how it will be judged
+- `IMPLEMENTATION.md` — how it is built and run, plus a deviations log
+- `results/<condition_id>/seed_<s>/` — one directory per run, with `metrics.json` and `git_commit.txt`
+- `reports/summary.md` — the write-up
+
+**Status** is how far execution got: Draft → In Progress → Complete / Partial / Failed.
+**Verdict** is what the results say about the hypothesis: ✅ supported, ❌ refuted, ⚠️ inconclusive.
+
+| Exp | Title | Status | Hypothesis (1 line) | Verdict | Date |
+|-----|-------|--------|---------------------|---------|------|
+| [exp_1](exp_1/DESIGN.md) | Focal vs. CE on CheXpert | Draft | Focal loss improves macro-F1 by ≥0.02 | — | 2026-05-23 |
 ```
 
-**What to store in `results/<condition>/git_commit.txt`:**
-```
-<full 40-char SHA>  <commit message>
-# Example:
-a3f9c21d8e...  feat: switch loss to focal, adjust gamma=2.0
-```
+### 8. Hand both plans back for review
 
-**If using an experiment tracker (WandB / MLflow):** log the commit hash as a run parameter:
-```python
-# WandB
-import subprocess, wandb
-commit = subprocess.check_output(["git", "log", "-1", "--format=%H"]).decode().strip()
-wandb.config.update({"git_commit": commit})
+Tell the user where the files are, then give a short summary in chat — the full text is on disk:
 
-# MLflow
-import subprocess, mlflow
-commit = subprocess.check_output(["git", "log", "-1", "--format=%H"]).decode().strip()
-mlflow.log_param("git_commit", commit)
-```
+- the hypothesis and the decision rule
+- the size of the run matrix and the compute estimate
+- the assumptions you made that they should confirm
 
-**Warn the user if:**
-- `git status` shows uncommitted changes → ⚠️ results will not be reproducible from the recorded hash
-- The repo has no commits yet → instruct them to initialise git and make an initial commit before running
-- `src/` or `data/` preprocessing scripts are outside the repo → those must also be versioned or their hashes recorded separately
+Ask them to review both documents, and wait for that before writing any scripts or configs. The
+review is the checkpoint that keeps a wrong assumption from turning into a week of wrong runs.
 
 ---
 
-### Step 8. Common Pitfalls to Call Out
+## What Makes a Design Hold Up
 
-Always scan the user's proposed setup for:
+Use these to shape the plan, and add a ⚠️ note inline wherever the user's proposed setup runs
+into one.
 
-- **Data leakage**: val/test statistics used in preprocessing
-- **Unfair baselines**: baselines under-tuned vs. proposed method over-tuned
-- **Metric mismatch**: optimizing one metric, reporting another
-- **Missing ablations**: can't attribute gains to specific component
-- **No reproducibility artifacts**: no seed, no config, no checkpoint, no commit hash recorded
-
-If spotted, add a ⚠️ warning inline in the plan.
-
----
-
-### Step 9. Output & File Writing
-
-1. Generate the plan content at the depth the stakes call for (Step 2 / Step 3). Set the header **Status: Draft**.
-2. Scaffold the experiment folder if it doesn't exist (see Step 0).
-3. Write the plan to `experiments/<exp_id>/DESIGN.md` with the **Write tool**.
-4. Create or update `experiments/INDEX.md` with a row for this experiment (see Step 0).
-5. Confirm to the user: "Plan written to `experiments/<exp_id>/DESIGN.md`; indexed in `experiments/INDEX.md`."
-6. Show a short summary in chat (hypothesis + next steps only — the full plan is in the file), then point to the implementation-planning handoff in Step 10.
-
-**Formatting rules:**
-- Markdown with clear headers matching the template
-- Tables for baselines and conditions
-- Bold key thresholds and decisions
-- ⚠️ warnings for any detected pitfalls
-- Keep it concise — a 2-week experiment shouldn't need a 10-page plan
-
----
-
-### Step 10. Handoff to Implementation Planning
-
-**Once the plan is accepted**, raise a few general operational suggestions before any code is written — these are decisions the plan assumes but doesn't lock down, and surfacing them now saves a re-run later. Phrase them as questions, not mandates, and skip any that the plan or conversation has already settled (don't ask about a tracker if the user already named one). For a Lean-tier sanity check, keep this light — one or two questions at most. Typical prompts:
-
-- **Experiment tracking**: _"Do you want to log runs to an experiment tracker such as Weights & Biases or MLflow? If so, I'll have the implementation plan wire it in and record the git commit as a run parameter."_
-- **Compute & scheduling**: _"Will these run locally, on a shared cluster, or via a job scheduler (e.g. Slurm)? That affects how the run scripts are structured."_
-- **Result storage**: _"Are checkpoints and metrics staying under `results/<condition>/`, or do large artifacts need separate/remote storage?"_
-- **Environment**: _"Should the implementation plan pin the environment (e.g. `requirements.txt` / `environment.yml`) so the runs are reproducible from the recorded commit?"_
-
-Then point them to the next step: _"When you're ready to code this up, enter plan mode and ask for an implementation plan covering the scripts, configs, and code changes. **Once you approve that plan, save it as `experiments/<exp_id>/IMPLEMENTATION.md` (next to DESIGN.md) before editing files** — the reporter relies on it to map conditions to configs and to spot where the build diverged from the design."_ That implementation plan is a separate artifact (it covers `scripts/`, `../../src/` utilities, config layout, and data-pipeline steps) — it is not written into `DESIGN.md`, and this skill does not produce it. The only files this skill writes are `DESIGN.md` and the `experiments/INDEX.md` row.
-
-**Status lifecycle.** The `Status` field tracks which phase the experiment is in, so anyone opening `DESIGN.md` or `INDEX.md` knows where it stands. The owners:
-- This skill writes **Draft** when it creates the plan.
-- Tell the user to flip it to **In Progress** (in both `DESIGN.md` and the `INDEX.md` row) once runs are launched.
-- The reporter sets the terminal state (**Complete / Partial / Failed**) and the verdict when it writes `summary.md`.
+- **Write the decision rule before the data exists.** Name the threshold for *supported*, the
+  one for *refuted*, and call everything between them *inconclusive*. Without the middle zone,
+  a +0.3-point wobble gets read as a win after the fact.
+- **Pair the seeds.** Use the same seed list for every condition so each comparison is paired;
+  it removes seed-to-seed variance from the difference. Three seeds is the floor for anything
+  that will be acted on, five or more for a paper claim.
+- **Match the test to the seed count.** A paired rank or permutation test over *n* seeds cannot
+  produce a two-sided p below 2/2ⁿ — 0.25 at three seeds, 0.0625 at five — so "p < 0.05" is
+  unreachable below six seeds whatever the data. With fewer, plan to report the per-seed
+  differences, mean ± std, and a confidence interval on the paired difference, and phrase the
+  decision rule as an effect size relative to seed noise.
+- **Name one primary comparison.** With several conditions against one baseline, some
+  difference will look significant by chance. Pre-specify the comparison the hypothesis rests
+  on; treat the rest as exploratory or correct for multiplicity (Holm).
+- **Fix checkpoint selection in advance.** Reporting the best test-set checkpoint is tuning on
+  test. Select on validation, evaluate on test once.
+- **Give baselines the same tuning budget.** An under-tuned baseline is the most common way a
+  method "wins".
+- **Check the budget against what was stated.** conditions × seeds × hours per run, compared
+  with the budget from step 1. If it doesn't fit, cut seeds for an exploratory pass, use a
+  smaller proxy task first, or drop conditions — in the design, not silently mid-run.
+- **Look for the usual confounds**: validation or test statistics leaking into preprocessing,
+  optimising one metric while reporting another, a gain that can't be attributed because no
+  ablation separates its components, conditions launched from different commits.
 
 ---
 
 ## Example Invocations
 
-- "I want to test whether data augmentation helps my image classifier" → exploratory plan, 1 dataset, 2–3 augmentation conditions
-- "Design an ablation study for my new attention mechanism" → full ablation plan isolating each component
-- "How should I benchmark my new optimizer against Adam?" → fair comparison plan with matched budgets and multiple tasks
-- "I'm submitting to NeurIPS, help me plan my experiments" → high-stakes plan with statistical testing and reproducibility checklist
+- "I want to test whether data augmentation helps my image classifier" → Lean: two conditions,
+  short DESIGN.md and IMPLEMENTATION.md
+- "Design an ablation study for my new attention mechanism" → Standard: one condition per
+  removed component, each with an id and a row in the run matrix
+- "How should I benchmark my new optimizer against Adam?" → Standard: matched tuning budgets,
+  paired seeds
+- "I'm submitting to NeurIPS, help me plan my experiments" → Full: every section, six or more
+  seeds if a significance claim is wanted

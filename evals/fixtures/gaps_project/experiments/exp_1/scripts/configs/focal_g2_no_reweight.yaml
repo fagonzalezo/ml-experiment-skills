@@ -1,0 +1,6 @@
+loss: focal
+gamma: 2.0
+class_reweight: false
+lr: 1.0e-3
+batch_size: 64
+epochs: 10
