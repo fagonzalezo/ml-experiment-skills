@@ -7,7 +7,8 @@ description: >
   experiment — phrases like "write a report", "summarise my results", "write up exp_3",
   "document what happened", "what did my experiment show", "my runs finished", or "we only got
   through half the ablations, write up what we have". Use it for finished, partial and failed
-  experiments alike. It writes experiments/exp_N/reports/summary.md, flags missing runs, build
+  experiments alike. It writes experiments/exp_N/reports/summary.md — a self-contained report
+  that recaps the design, gives the results, and discusses what they mean — flags missing runs, build
   deviations and unrecorded code versions instead of smoothing them over, and sets the
   experiment's final Status and Verdict. Do NOT use for planning a new experiment (use
   ml-experiment-planner), for exploratory data analysis with no write-up, or for drafting a
@@ -17,12 +18,19 @@ description: >
 # ML Experiment Reporter
 
 Reads an experiment's design, its build plan, and the results on disk, and writes
-`reports/summary.md`: what was done, what was found, and what it means.
+`reports/summary.md`: what was tested and why, what was found, and what it means.
 
-One principle runs through everything below: **every claim in the report traces to a file.** The
-people who read a report mostly never open `results/`, so a plausible number that isn't in the
-files does more damage than a visible gap. When the evidence is missing, the report says it is
-missing.
+Two principles run through everything below.
+
+**Every claim in the report traces to a file.** Most people who read a report never open
+`results/`, so a plausible number that isn't in the files does more damage than a visible gap.
+When evidence is missing, the report says it is missing.
+
+**The report stands on its own.** The person reading it may never open `DESIGN.md`. They need
+enough of the design to make sense of the results, and they need the results discussed, not just
+tabulated. A table of means with a verdict underneath leaves all the interpretation to the
+reader. Interpretation is welcome as long as it is labelled as interpretation and points to the
+number it rests on.
 
 <!-- contract:start (this block is byte-identical in ml-experiment-planner and ml-experiment-reporter) -->
 ## Shared Layout Contract
@@ -101,10 +109,32 @@ reading further, check it looks like an experiment folder — a `DESIGN.md` (or 
 
 ### 2. Read the plans
 
-From `DESIGN.md`, take: the **tier**, the hypothesis sentence, the **Conditions** table (ids and
-roles), the primary metric and its `metrics.json` key, the planned seeds, and the decision rule.
-From `IMPLEMENTATION.md`, take: the run matrix (which config and command produced each
-condition), what every run was meant to record, and the **Deviations Log**.
+From `DESIGN.md`, take two things.
+
+For the inventory and the verdict:
+- the **tier**
+- the hypothesis sentence
+- the **Conditions** ids and roles
+- the primary metric and its `metrics.json` key
+- the planned seeds
+- the decision rule
+
+For the report's design recap and discussion:
+- **Setup**: dataset and split, model, training regime
+- for each condition, *what differs from the baseline*, *what it isolates* and its *expected*
+  value
+- **Evaluation Protocol**: secondary metrics, the split the metrics are computed on, checkpoint
+  selection, the planned analysis
+- **Risks & Mitigations**
+- the **"Then what"** under each outcome
+
+The reader of the report needs the second set to understand the results. The *expected* values
+and the *risks* also give the discussion something to test the results against.
+
+From `IMPLEMENTATION.md`, take:
+- the run matrix: which config and command produced each condition
+- what every run was meant to record
+- the **Deviations Log**
 
 If `IMPLEMENTATION.md` is absent, carry on and note it under caveats — build deviations can then
 only be inferred from configs and git, not confirmed.
@@ -176,10 +206,49 @@ seeing the numbers. It is ⚠️ Inconclusive whenever the rule cannot be applie
   condition ran from a different, or dirty, tree than the baseline) — say which one;
 - the design has no decision rule.
 
-### 6. Write the report
+### 6. Interpret the results
+
+The verdict answers one narrow question. A reader also wants to know what the experiment
+taught them. Before writing, work through the questions below. Skip any that don't apply; a
+two-run sanity check might only touch the first.
+
+- **Effect size against noise.** How large is the primary difference compared with the
+  seed-to-seed spread, and compared with the threshold in the decision rule? Do all paired seeds
+  point the same way, or does one seed carry the mean? A gain of 0.022 when the spread is 0.004
+  means something different from the same gain when the spread is 0.03.
+- **Against expectations.** The design's Conditions table often has an *expected* column. Where
+  the results land inside it, say so in a line. Where they don't (a baseline well below its
+  prior-run range, an ablation that beats the full method), that is usually the most informative
+  thing in the report, and worth a paragraph.
+- **Secondary metrics.** Do they move with the primary metric or against it? A gain in macro-F1
+  bought with a loss in AUROC is a trade-off, not a win, and a reader should hear about it.
+- **Ablations and mechanism.** What does each ablation say about where the effect comes from? If
+  the ablation that would separate two explanations didn't run, say which question stays open.
+- **Alternative explanations.** For each deviation and provenance gap from step 4, ask whether it
+  could produce the observed difference by itself (a different learning rate, a different commit,
+  a dirty tree). Name the ones that could.
+- **Implications.** What does this mean for the project? Which branch of the design's "Then what"
+  do the results point to, and how firmly?
+
+Give every point you keep one of three labels. They let a reader weigh each point without having
+to reconstruct where it came from:
+
+- **Finding**: follows directly from the pre-specified comparison and decision rule.
+- **Observation**: visible in the data but not pre-specified (secondary metrics, per-seed
+  patterns, conditions outside the primary comparison). It is real, but exploratory.
+- **Hypothesis**: an explanation drawn from domain knowledge, such as why focal loss might help
+  rare classes. It is useful for deciding what to do next, but the data here doesn't test it. Say
+  what experiment would.
+
+Tie each point to the number it rests on. None of them changes the verdict: the decision rule
+settled that in step 5. If the discussion makes you doubt the rule itself (say, the threshold
+now looks too loose), write that down as a point for the next design. It is not grounds to
+re-decide this experiment.
+
+### 7. Write the report
 
 Write `experiments/<exp_id>/reports/summary.md` with the Write tool. Size it to the design's
-tier: a Lean design gets the Lean report, since a ten-section write-up of a two-run sanity check
+tier: a Lean design gets the Lean report, since an eleven-section write-up of a two-run sanity check
 hides the answer. If a `summary.md` already exists, read it first; the new report replaces it
 and carries a line under the header saying what it supersedes and why (e.g. "Supersedes the
 report of 2026-05-30: two more conditions finished").
@@ -193,11 +262,21 @@ report of 2026-05-30: two more conditions finished").
 ## Summary
 Two or three sentences: the hypothesis, whether it held, the number that decides it.
 
+## What Was Tested
+Three to five lines, from the design: the hypothesis, the setup in one line (dataset, model,
+training budget), each condition id with what it changes, the primary metric and its key, the
+seeds, and the decision rule quoted.
+
 ## Results
 | Condition id | <primary metric> per seed | Mean ± std | Δ vs. baseline | Commit |
 |--------------|---------------------------|------------|----------------|--------|
 
 Decision rule (from the design): "<quoted>" → met / not met / cannot be evaluated because <…>.
+
+## Discussion
+One short paragraph covering what the result means and how much weight it carries (one seed? a
+margin close to the threshold?), plus anything surprising. Label any explanation that goes
+beyond the numbers as a hypothesis.
 
 ## Deviations & Missing Data
 Deviations Log entries, config mismatches, runs that didn't finish, missing or dirty
@@ -220,17 +299,36 @@ One or two lines.
 **Verdict**: <✅ Supported | ❌ Refuted | ⚠️ Inconclusive>
 
 ## 1. Summary
-Two to four sentences for someone who reads nothing else: the hypothesis, whether it was
-supported, the key number. If a deviation or gap materially limits the conclusion, flag it here
-with ⚠️.
+One paragraph for someone who reads nothing else. It covers:
+- the question, and what was compared to answer it
+- the key number
+- the verdict, and the reason for it
+- the most useful insight from the Discussion
 
-## 2. Hypothesis & Verdict
-**Hypothesis (from the design):** _the exact sentence_
+If a deviation or gap materially limits the conclusion, flag it here with ⚠️.
 
-**Verdict:** <verdict>
+## 2. Experiment Design
+_As designed (see DESIGN.md for the full plan); §3 records what actually ran._
 
-**Evidence:** one or two sentences — the primary-metric difference, and how it sits against the
-decision rule.
+**Hypothesis:** _the exact sentence from the design_
+
+**Setup:** dataset and split, model, training regime, in two or three lines.
+
+| Condition id | Role | What differs from the baseline | What it isolates | Expected <primary metric> |
+|--------------|------|-------------------------------|------------------|---------------------------|
+
+**Evaluation:**
+- primary metric (`<key>`) and the split it is computed on
+- secondary metrics
+- seeds
+- checkpoint selection
+- the planned statistical comparison
+
+**Decision rule:** "<quoted from the design>"
+
+Aim for about a third of the length of DESIGN.md. Keep what a reader needs to interpret §5–§9:
+what each condition is, how it is measured, and what would count as success. Leave out the
+compute budget and the reproducibility checklist, which the reader can find in the design.
 
 ## 3. Setup As Run
 What was actually built and run, from the configs and run artifacts.
@@ -254,9 +352,13 @@ One line on whether every compared condition ran from the same commit, and if no
 | Condition id | Role | Mean ± std | n seeds | Δ vs. <baseline id> |
 |--------------|------|------------|---------|---------------------|
 
-Every planned condition has a row; one that didn't run reads _Not run_.
+Every planned condition has a row; a condition that didn't run reads _Not run_. After the table,
+add one or two sentences on what it shows: the ordering, the size of the gaps against the spread,
+whether every seed agrees. Keep this descriptive; interpretation goes in §9.
 
 ### 5.2 Secondary metrics
+Same layout as 5.1, followed by a sentence saying whether these move with the primary metric.
+
 ### 5.3 Ablations (if any)
 | Condition id | What it removes | Primary metric | Δ vs. full method | Reading |
 |--------------|-----------------|----------------|-------------------|---------|
@@ -274,9 +376,14 @@ Primary comparison: <proposed id> vs. <baseline id> on `<key>`, paired over <n> 
 
 Other comparisons are exploratory unless the design pre-specified them.
 
-## 7. Comparison to Decision Rules
+## 7. Verdict & Decision Rules
+**Verdict:** <verdict>
+
 | Rule from the design | Observed | Met? |
 |----------------------|----------|------|
+
+**Evidence:** one or two sentences on the primary-metric difference and where it falls against
+the rule. If the verdict is Inconclusive, say which condition from step 5 caused it.
 
 ## 8. Missing Data & Caveats
 | Condition id | Planned seeds | Runs with the primary metric | Gap |
@@ -286,13 +393,36 @@ Then, in prose: each planned condition, seed or metric that is missing and why (
 conditions found in `results/` that the design never planned; whether `IMPLEMENTATION.md` was
 available. If nothing is missing: "All planned runs completed."
 
-## 9. Conclusions & Next Steps
-- **What this experiment established**
-- **What remains uncertain**
-- **Recommended follow-ups** — refer to existing experiments in `INDEX.md` by id where relevant;
-  a new one starts with the ml-experiment-planner skill.
+## 9. Discussion
+What the results mean, written up from the interpretation in step 6. Use prose, with one short
+subsection per question that had something to say:
 
-## 10. Reproducibility Record
+### 9.1 The primary result
+Effect size against seed spread and against the threshold; per-seed consistency.
+
+### 9.2 Against expectations
+Where results fell inside or outside the design's expected values, and what the surprises
+suggest.
+
+### 9.3 Secondary metrics and trade-offs
+
+### 9.4 What the ablations say
+Or, if an ablation didn't run, which question it would have answered.
+
+### 9.5 Alternative explanations
+Deviations or provenance gaps that could account for the difference on their own.
+
+Mark each claim **Finding**, **Observation** or **Hypothesis**, and cite the number behind it.
+This section explains the verdict in §7; it does not revisit it.
+
+## 10. Conclusions & Next Steps
+- **What this experiment established**: Findings only.
+- **What remains uncertain**: including the Hypotheses from §9 and what would test each one.
+- **Recommended follow-ups**: tie each one to a point in §9 and to the design's "Then what".
+  Refer to existing experiments in `INDEX.md` by id where relevant; a new experiment starts with
+  the ml-experiment-planner skill.
+
+## 11. Reproducibility Record
 | Item | Status | Evidence |
 |------|--------|----------|
 | Seeds logged | | `seed` in each metrics.json |
@@ -323,10 +453,15 @@ available. If nothing is missing: "All planned runs completed."
   computed.
 - **Figures that exist.** Reference files in `reports/figures/`; don't describe plots that
   aren't there.
-- **Write for a reader who hasn't seen the design.** Specific numbers over adjectives, and no
-  claim of success or failure beyond what the numbers carry. Use ✅ / ❌ / ⚠️ consistently.
+- **Interpretation is labelled.** The Discussion may reason beyond the numbers, since that is
+  where most of the insight comes from. What the reader needs is to be able to tell a Finding from
+  an Observation from a Hypothesis, and to see which number each one rests on. An unlabelled
+  speculation in a report reads as a result.
+- **Write for a reader who hasn't seen the design.** §2 (or *What Was Tested*) gives them the
+  conditions, metric and rule. After that, use specific numbers rather than adjectives, and claim
+  no more success or failure than the numbers support. Use ✅ / ❌ / ⚠️ consistently.
 
-### 7. Close out the experiment
+### 8. Close out the experiment
 
 1. Set the `Status` field in `DESIGN.md` to the report's status with a one-word Edit (in
    `PLAN.md` for an older experiment). Leave the rest of the file alone — it is the record of
@@ -334,8 +469,8 @@ available. If nothing is missing: "All planned runs completed."
 2. In the experiment's `experiments/INDEX.md` row, set the same Status and the Verdict, linking
    the verdict to the report: `[✅](exp_3/reports/summary.md)`. If there is no `INDEX.md`, skip
    this.
-3. Tell the user where the report is, and show the Summary and the Conclusions in chat so they
-   get the takeaways without opening the file.
+3. Tell the user where the report is. In chat, show the Summary, the two or three main points
+   from the Discussion, and the Conclusions, so they get the takeaways without opening the file.
 
 Those two edits and the files under `reports/` are everything this skill writes. It does not
 touch `IMPLEMENTATION.md`, the configs, or anything in `results/`.

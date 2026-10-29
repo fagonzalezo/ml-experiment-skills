@@ -96,7 +96,13 @@
         "Setup As Run does not present hardware as observed fact (it is not recorded in the run artifacts)",
         "DESIGN.md differs from the fixture only in its Status line, which now reads Partial",
         "The exp_1 row in experiments/INDEX.md shows Partial and the inconclusive verdict",
-        "IMPLEMENTATION.md, scripts/ and results/ are unchanged"
+        "IMPLEMENTATION.md, scripts/ and results/ are unchanged",
+        "The report explains each of the three conditions (what differs from the baseline and what it isolates), including that focal_g2_no_reweight separates the loss from the class reweighting",
+        "The report states the primary metric and its split, the seeds, and checkpoint selection, and quotes the decision rule, without requiring DESIGN.md",
+        "A Discussion section weighs the ~0.022 gain against the seed-to-seed spread and the 0.02 threshold, and notes all three paired seeds favour focal_g2",
+        "The Discussion notes that test_auroc is essentially unchanged (~0.931 vs ~0.932)",
+        "The Discussion says that, with the ablation not run, it remains open whether any gain comes from the loss or the reweighting",
+        "Discussion points are labelled (Finding / Observation / Hypothesis or equivalent), and no point is used to change the Inconclusive verdict"
       ]
     },
     {
@@ -114,7 +120,9 @@
         "Verdict is Inconclusive, with the reason that the decision rule's paired interval cannot be computed",
         "Notes that IMPLEMENTATION.md is absent",
         "Does not create experiments/INDEX.md",
-        "DESIGN.md differs from the fixture only in its Status line"
+        "DESIGN.md differs from the fixture only in its Status line",
+        "The report describes the two conditions (adam baseline, lion proposed) and quotes the decision rule",
+        "The Discussion notes that the +0.74 difference in means exceeds the 0.5 threshold but cannot be confirmed without per-seed values, and says what is needed to resolve it"
       ]
     },
     {
@@ -123,15 +131,17 @@
       "skill": "ml-experiment-reporter",
       "prompt": "what did the random crop sanity check show? write it up",
       "files": ["evals/fixtures/lean_project"],
-      "expected_output": "A short Lean-shaped report, Complete and Supported, with no statistics invented for a single seed.",
+      "expected_output": "A short Lean-shaped report, Complete and Supported, with a brief design recap and discussion, and no statistics invented for a single seed.",
       "expectations": [
-        "experiments/exp_1/reports/summary.md exists and follows the Lean report shape (about four sections, not the ten-section template)",
+        "experiments/exp_1/reports/summary.md exists and follows the Lean report shape (no Code Version, Statistical Analysis or Reproducibility Record sections)",
         "Status is Complete",
         "Verdict is Supported, citing the +0.29 point difference against the 0.2 threshold",
         "Reports test accuracy 99.12 for baseline and 99.41 for random_crop",
         "Contains no p-value, standard deviation or confidence interval",
         "DESIGN.md Status reads Complete and the rest of the file is unchanged",
-        "The exp_1 row in experiments/INDEX.md shows Complete and the supported verdict"
+        "The exp_1 row in experiments/INDEX.md shows Complete and the supported verdict",
+        "The report has a short 'What Was Tested' part naming both conditions, the metric and the 0.2-point rule",
+        "The report has a short Discussion that notes the single seed limits how much weight the result carries"
       ]
     }
   ]

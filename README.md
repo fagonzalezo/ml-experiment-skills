@@ -28,7 +28,7 @@ Reconciles what was designed, what was built, and what the runs produced, then w
 **Triggers on:** "write a report", "summarise my results", "write up exp_3", "my runs finished", "what did my experiment show", etc.
 
 **Produces:**
-- A report cross-referencing `DESIGN.md`, `IMPLEMENTATION.md`, and `results/`, sized to the design's tier
+- A self-contained report cross-referencing `DESIGN.md`, `IMPLEMENTATION.md`, and `results/`, sized to the design's tier: it recaps the design (conditions, metric, decision rule) so the report can be read without the design, and discusses what the results mean (effect size against noise, surprises, trade-offs, alternative explanations), labelling each point as a finding, an exploratory observation, or a hypothesis
 - `reports/inventory.json` — a machine-readable inventory of `results/` (per-seed values, means, paired comparisons, recorded commits) produced by a bundled script, so every number in the report has a source
 - Separate callouts for coverage gaps (planned but not run), build deviations (run, but not as designed), and provenance gaps (missing, dirty, or mismatched commits)
 - The final `Status` and `Verdict`, written to `DESIGN.md` and `INDEX.md`
